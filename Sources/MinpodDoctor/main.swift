@@ -126,6 +126,31 @@ if args.first == "simulate-add", args.count >= 2 {
     RunLoop.main.run()
 }
 
+// add <audiofile...>: REAL write — copy files onto the connected iPod and
+// insert them into its iTunesDB (backs up the original first).
+if args.first == "add", args.count >= 2 {
+    let files = args.dropFirst().map { URL(fileURLWithPath: $0) }
+    guard let dev = IPodDetector().currentDevices().first else {
+        print("No iPod connected."); exit(1)
+    }
+    print("Writing \(files.count) file(s) to \(dev.displayName) @ \(dev.mountPoint.path)")
+    Task {
+        defer { exit(0) }
+        do {
+            let result = try await SyncEngine(device: dev).add(files: files)
+            print("  added: \(result.added)")
+            if !result.skipped.isEmpty { print("  skipped: \(result.skipped)") }
+            // Re-read to confirm the on-disk DB is valid and contains the track.
+            let db = try ITunesDB.read(from: dev)
+            print("  on-device track count now: \(db.tracks.count)")
+            verifyHash58(db, guid: dev.firewireGUID ?? "")
+        } catch {
+            print("  ERROR: \(error)")
+        }
+    }
+    RunLoop.main.run()
+}
+
 if let path = args.first {
     let url = URL(fileURLWithPath: path)
     do {

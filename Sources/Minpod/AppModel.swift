@@ -32,6 +32,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Auto-sync: dropped files are copied and inserted into the iPod immediately.
+    func handleDrop(urls: [URL]) {
+        guard let dev = device, !isBusy else { return }
+        let audio = urls.filter { AudioMetadata.supportedExtensions.contains($0.pathExtension.lowercased()) }
+        guard !audio.isEmpty else {
+            status = "No supported audio files in drop"
+            return
+        }
+        isBusy = true
+        status = "Adding \(audio.count) file\(audio.count == 1 ? "" : "s")…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                let result = try await SyncEngine(device: dev).add(files: audio)
+                await MainActor.run {
+                    var msg = "Added \(result.added.count) song\(result.added.count == 1 ? "" : "s")"
+                    if !result.skipped.isEmpty { msg += " · skipped \(result.skipped.count)" }
+                    self.status = msg
+                    self.isBusy = false
+                    self.loadLibrary()
+                }
+            } catch {
+                await MainActor.run {
+                    self.status = "Sync failed: \(error.localizedDescription)"
+                    self.isBusy = false
+                }
+            }
+        }
+    }
+
     func loadLibrary() {
         guard let dev = device else { return }
         isBusy = true
