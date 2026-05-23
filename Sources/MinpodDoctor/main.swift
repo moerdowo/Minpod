@@ -1,0 +1,125 @@
+import Foundation
+import MinpodKit
+
+// Command-line diagnostic for the iTunesDB engine. Validates the byte-exact
+// round-trip against real hardware and dumps the database header so we can
+// confirm versions and checksum schemes empirically.
+//
+//   minpod-doctor                 # scan connected iPods
+//   minpod-doctor <iTunesDB path> # analyze a database file directly
+
+func hexDump(_ bytes: ArraySlice<UInt8>, base: Int = 0) {
+    let arr = Array(bytes)
+    var i = 0
+    while i < arr.count {
+        let row = arr[i..<min(i + 16, arr.count)]
+        let hex = row.map { String(format: "%02x", $0) }.joined(separator: " ")
+        let ascii = row.map { (32...126).contains($0) ? String(UnicodeScalar($0)) : "." }.joined()
+        print(String(format: "  %04x  %-47s  %@", base + i, (hex as NSString).utf8String!, ascii as NSString))
+        i += 16
+    }
+}
+
+func analyze(_ db: ITunesDB, label: String) {
+    let root = db.root
+    print("  magic:           \(root.magic)")
+    print("  file size:       \(db.sourceBytes.count) bytes")
+    print("  mhbd headerLen:  \(root.headerLen)")
+    print("  mhbd totalLen:   \(root.u32(at: 8))")
+    print("  unknown1 @0x0C:  \(root.u32(at: 0x0C))")
+    print("  version @0x10:   0x\(String(root.u32(at: 0x10), radix: 16))")
+    print("  #children @0x14: \(root.u32(at: 0x14))")
+    print("  persist id @0x18:0x\(String(root.u64(at: 0x18), radix: 16))")
+    print("  track count:     \(db.tracks.count)")
+    let datasets = root.children.filter { $0.magic == "mhsd" }.map { $0.u32(at: 12) }
+    print("  mhsd types:      \(datasets)")
+    print("  --- mhbd header hex (\(root.headerLen) bytes) ---")
+    hexDump(db.sourceBytes[0..<min(root.headerLen, db.sourceBytes.count)])
+    let exact = db.roundTripsExactly()
+    print("  round-trip exact: \(exact ? "PASS ✅" : "FAIL ❌")")
+    if !exact {
+        let out = db.serialize()
+        print("  serialized size: \(out.count) (source \(db.sourceBytes.count))")
+        if let diff = firstDifference(out, db.sourceBytes) {
+            print("  first byte diff at offset 0x\(String(diff, radix: 16))")
+            let lo = max(0, diff - 8)
+            print("  source:")
+            hexDump(db.sourceBytes[lo..<min(lo + 32, db.sourceBytes.count)], base: lo)
+            print("  ours:")
+            hexDump(ArraySlice(out)[lo..<min(lo + 32, out.count)], base: lo)
+        }
+    }
+    if db.tracks.count > 0 {
+        print("  --- first up to 5 tracks ---")
+        for t in db.tracks.prefix(5) {
+            print("    [\(t.id)] \(t.artist) — \(t.title) (\(t.durationText))  \(t.ipodPath)")
+        }
+    }
+}
+
+func firstDifference(_ a: [UInt8], _ b: [UInt8]) -> Int? {
+    let n = min(a.count, b.count)
+    for i in 0..<n where a[i] != b[i] { return i }
+    return a.count == b.count ? nil : n
+}
+
+var args = Array(CommandLine.arguments.dropFirst())
+
+// Optional: --guid XXXX recomputes hash58 and compares to the stored checksum.
+var overrideGUID: String?
+if let gi = args.firstIndex(of: "--guid"), gi + 1 < args.count {
+    overrideGUID = args[gi + 1]
+    args.removeSubrange(gi...gi + 1)
+}
+
+func verifyHash58(_ db: ITunesDB, guid: String) {
+    let stored = Array(db.sourceBytes[Hash58.offHash58..<Hash58.offHash58 + 20])
+    var work = db.sourceBytes
+    do {
+        try Hash58.writeHash(into: &work, firewireGUID: guid)
+        let computed = Array(work[Hash58.offHash58..<Hash58.offHash58 + 20])
+        let match = computed == stored
+        print("  hash58 (guid \(guid)): \(match ? "MATCH ✅ — checksum algorithm verified" : "MISMATCH ❌")")
+        if !match {
+            print("    stored:   \(stored.map { String(format: "%02x", $0) }.joined())")
+            print("    computed: \(computed.map { String(format: "%02x", $0) }.joined())")
+        }
+    } catch {
+        print("  hash58 error: \(error)")
+    }
+}
+
+if let path = args.first {
+    let url = URL(fileURLWithPath: path)
+    do {
+        let db = try ITunesDB.parse(try Data(contentsOf: url))
+        print("FILE: \(path)")
+        analyze(db, label: path)
+        if let g = overrideGUID { verifyHash58(db, guid: g) }
+    } catch {
+        print("ERROR reading \(path): \(error)")
+        exit(1)
+    }
+} else {
+    let devices = IPodDetector().currentDevices()
+    if devices.isEmpty {
+        print("No iPod detected. Connect an iPod and enable disk use, then re-run.")
+        exit(0)
+    }
+    for dev in devices {
+        print("════════════════════════════════════════════")
+        print("iPod: \(dev.displayName)  @ \(dev.mountPoint.path)")
+        print("  model:   \(dev.modelNumber ?? "?")")
+        print("  serial:  \(dev.serialNumber ?? "?")")
+        print("  fwGUID:  \(dev.firewireGUID ?? "?")")
+        print("  family:  \(dev.family)")
+        print("  iTunesDB:\(dev.iTunesDBURL.path)")
+        do {
+            let db = try ITunesDB.read(from: dev)
+            analyze(db, label: dev.displayName)
+            if let g = overrideGUID ?? dev.firewireGUID { verifyHash58(db, guid: g) }
+        } catch {
+            print("  ERROR reading iTunesDB: \(error)")
+        }
+    }
+}

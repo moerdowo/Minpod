@@ -12,6 +12,11 @@ let package = Package(
             dependencies: ["MinpodKit"],
             path: "Sources/Minpod"
         ),
+        .executableTarget(
+            name: "MinpodDoctor",
+            dependencies: ["MinpodKit"],
+            path: "Sources/MinpodDoctor"
+        ),
         .target(
             name: "MinpodKit",
             path: "Sources/MinpodKit"

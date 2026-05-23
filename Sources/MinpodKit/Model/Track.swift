@@ -81,18 +81,16 @@ extension Track {
     }
 }
 
-/// Decode the UTF-16LE (or UTF-8) string payload of a string-type mhod.
+/// Decode the string payload of a string-type mhod. Standard iTunesDB string
+/// objects (title/artist/album/location/…) are UTF-16LE; the body header is
+/// position(4), byte-length(4), then two unknown words before the string.
 func decodeMHODString(_ mhod: Chunk) -> String? {
     let t = mhod.trailing
     guard t.count >= 16 else { return nil }
     let len = Int(le32(t, 4))
-    let encoding = le32(t, 8)
     let start = 16
     guard len >= 0, start + len <= t.count else { return nil }
     if len == 0 { return "" }
     let raw = Array(t[start..<start + len])
-    if encoding == 1 {
-        return String(bytes: raw, encoding: .utf8)
-    }
     return String(bytes: raw, encoding: .utf16LittleEndian)
 }
