@@ -189,6 +189,7 @@ struct ContentView: View {
                     }
                 }
                 Button("Export to…") { model.exportSelected(ids: ids) }
+                Button("Re-encode to 44.1 kHz") { model.reencode(ids: ids) }
                 Divider()
                 Button("Remove \(ids.count) Song\(ids.count == 1 ? "" : "s") from iPod", role: .destructive) {
                     selection = ids; confirmRemove = true

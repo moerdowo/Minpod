@@ -266,6 +266,72 @@ public struct SyncEngine {
         try writeDatabase(bytes)
     }
 
+    /// Re-encode the given tracks' on-device files to AAC at `sampleRate`
+    /// (default 44.1 kHz) and update the database. Returns the number re-encoded.
+    @discardableResult
+    public func reencode(trackIds: Set<UInt32>, sampleRate: Int = 44100, bitrate: Int = 256000) throws -> Int {
+        let db = try ITunesDB.read(from: device)
+        let scheme = ChecksumScheme.detect(in: db)
+        guard scheme.isSupported else { throw ChecksumError.unsupported(scheme.label) }
+
+        var count = 0
+        var oldFilesToDelete: [URL] = []
+        for mhit in db.trackChunks where trackIds.contains(mhit.u32(at: 16)) {
+            let oldPath = Track.from(mhit: mhit).ipodPath
+            let oldURL = fileURL(forIPodPath: oldPath)
+            guard fm.fileExists(atPath: oldURL.path) else { continue }
+
+            let tmp = fm.temporaryDirectory.appendingPathComponent("minpod-\(UUID().uuidString).m4a")
+            guard runAfconvert(input: oldURL, output: tmp, sampleRate: sampleRate, bitrate: bitrate),
+                  fm.fileExists(atPath: tmp.path) else { continue }
+
+            let (newURL, newIPodPath) = try destination(forExtension: "m4a")
+            try fm.copyItem(at: tmp, to: newURL)
+            try? fm.removeItem(at: tmp)
+
+            let newSize = UInt32((try? fm.attributesOfItem(atPath: newURL.path)[.size] as? Int ?? 0) ?? 0)
+            replaceMhod(mhit, type: .location, newIPodPath)
+            replaceMhod(mhit, type: .filetype, "AAC audio file")
+            mhit.setU32(at: 0x24, newSize)                                  // size
+            mhit.setU32(at: 0x3C, UInt32(sampleRate) << 16)                 // sample rate
+            mhit.setU32(at: 0x88, Float(sampleRate).bitPattern)             // sample rate (float)
+            let lenMS = mhit.u32(at: 0x28)
+            if lenMS > 0 { mhit.setU32(at: 0x38, UInt32(Double(newSize) * 8 / (Double(lenMS) / 1000) / 1000)) }
+
+            oldFilesToDelete.append(oldURL)
+            count += 1
+        }
+        guard count > 0 else { return 0 }
+
+        db.rebuildIndexes()
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: device.firewireGUID)
+        try writeDatabase(bytes)
+        for url in oldFilesToDelete { try? fm.removeItem(at: url) }
+        return count
+    }
+
+    private func replaceMhod(_ mhit: Chunk, type: MHODType, _ value: String) {
+        let m = TrackBuilder.makeStringMHOD(type: type, value)
+        if let i = mhit.children.firstIndex(where: { $0.magic == "mhod" && $0.u32(at: 12) == type.rawValue }) {
+            mhit.children[i] = m
+        } else {
+            mhit.children.append(m)
+            mhit.setU32(at: 0x0C, UInt32(mhit.children.filter { $0.magic == "mhod" }.count))
+        }
+    }
+
+    private func runAfconvert(input: URL, output: URL, sampleRate: Int, bitrate: Int) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
+        p.arguments = ["-f", "m4af", "-d", "aac@\(sampleRate)", "-b", "\(bitrate)",
+                       input.path, output.path]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run(); p.waitUntilExit() } catch { return false }
+        return p.terminationStatus == 0
+    }
+
     /// Map a colon-separated iPod path (":iPod_Control:Music:F00:ABCD.mp3") to a URL.
     func fileURL(forIPodPath path: String) -> URL {
         var url = device.mountPoint

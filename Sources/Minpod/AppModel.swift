@@ -217,6 +217,21 @@ final class AppModel: ObservableObject {
         runPlaylist("Adding to playlist…") { try $0.addToPlaylist(id: id, trackIds: trackIds) }
     }
 
+    /// Re-encode the selected tracks to 44.1 kHz AAC (helps older iPods).
+    func reencode(ids: Set<UInt32>) {
+        guard let dev = device, !isBusy, !ids.isEmpty else { return }
+        isBusy = true
+        status = "Re-encoding \(ids.count) song\(ids.count == 1 ? "" : "s") to 44.1 kHz…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                let n = try SyncEngine(device: dev).reencode(trackIds: ids)
+                await MainActor.run { self.status = "Re-encoded \(n) song\(n == 1 ? "" : "s") — click Eject"; self.isBusy = false; self.loadLibrary() }
+            } catch {
+                await MainActor.run { self.status = "Re-encode failed: \(error.localizedDescription)"; self.isBusy = false }
+            }
+        }
+    }
+
     func eject() {
         guard let dev = device, !isBusy else { return }
         do {

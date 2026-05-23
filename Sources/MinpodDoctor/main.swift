@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import ImageIO
+import AVFoundation
 import MinpodKit
 
 // Command-line diagnostic for the iTunesDB engine. Validates the byte-exact
@@ -531,6 +532,45 @@ if args.first == "repair-samplerate" {
         verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
     } catch { print("ERROR: \(error)") }
     exit(0)
+}
+
+// reencode-441: re-encode every non-44.1 kHz track to 44.1 kHz AAC.
+if args.first == "reencode-441" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let ids = Set(db.trackChunks.filter { ($0.u32(at: 0x3C) >> 16) != 44100 }.map { $0.u32(at: 16) })
+        print("re-encoding \(ids.count) track(s) to 44.1 kHz: \(ids.sorted())")
+        guard !ids.isEmpty else { print("nothing to do"); exit(0) }
+        let n = try SyncEngine(device: dev).reencode(trackIds: ids)
+        print("re-encoded \(n) track(s)")
+        verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// check-durations: compare each track's stored length to the actual file duration.
+if args.first == "check-durations" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    Task {
+        defer { exit(0) }
+        do {
+            let db = try ITunesDB.read(from: dev)
+            print("id    stored(s)  actual(s)  diff(s)  ext   flag")
+            for t in db.tracks {
+                var url = dev.mountPoint
+                for p in t.ipodPath.split(separator: ":") { url.appendPathComponent(String(p)) }
+                guard FileManager.default.fileExists(atPath: url.path) else { print("\(t.id) MISSING FILE"); continue }
+                let asset = AVURLAsset(url: url)
+                let dur = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? -1
+                let stored = Double(t.lengthMS) / 1000.0
+                let diff = dur >= 0 ? (stored - dur) : 0
+                let flag = abs(diff) > 2 ? "  <-- MISMATCH" : ""
+                print(String(format: "%-5d %-10.2f %-10.2f %-+8.2f %-5@%@", t.id, stored, dur, diff, url.pathExtension as NSString, flag))
+            }
+        } catch { print("ERROR: \(error)") }
+    }
+    RunLoop.main.run()
 }
 
 // track-fields: dump playback-relevant mhit fields for every track.
