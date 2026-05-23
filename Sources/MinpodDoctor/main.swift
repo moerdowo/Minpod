@@ -558,6 +558,68 @@ if args.first == "export", args.count >= 3 {
     exit(0)
 }
 
+// pl-rename <hexid> <name> | pl-del <hexid>: test rename/delete playlist.
+if (args.first == "pl-rename" || args.first == "pl-del"), args.count >= 2 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    guard let pid = UInt64(args[1], radix: 16) else { print("bad id"); exit(1) }
+    do {
+        let eng = SyncEngine(device: dev)
+        if args.first == "pl-rename", args.count >= 3 { try eng.renamePlaylist(id: pid, name: args[2]) }
+        else { try eng.deletePlaylist(id: pid) }
+        let db = try ITunesDB.read(from: dev)
+        print("playlists now: \(db.userPlaylists.map { "\($0.name)(\($0.trackIds.count))" })")
+        verifyHash58(db, guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// playlist-test: create a playlist and add the given track ids to it.
+if args.first == "playlist-test", args.count >= 2 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let ids = args.dropFirst().compactMap { UInt32($0) }
+    do {
+        let eng = SyncEngine(device: dev)
+        let pid = try eng.createPlaylist(name: "Minpod Test PL")
+        try eng.addToPlaylist(id: pid, trackIds: ids)
+        print("created playlist id=\(String(pid, radix:16)) with \(ids.count) track(s)")
+        let db = try ITunesDB.read(from: dev)
+        for pl in db.userPlaylists { print("  playlist \"\(pl.name)\" tracks=\(pl.trackIds.count) \(pl.trackIds)") }
+        verifyHash58(db, guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// playlists-dump: list every playlist in the type-2 and type-3 datasets.
+if args.first == "playlists-dump" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    func le(_ a: [UInt8], _ o: Int) -> UInt32 { (o+4<=a.count) ? UInt32(a[o]) | (UInt32(a[o+1])<<8) | (UInt32(a[o+2])<<16) | (UInt32(a[o+3])<<24) : 0 }
+    func decodeTitle(_ pl: Chunk) -> String {
+        for m in pl.children where m.magic == "mhod" && m.u32(at: 12) == 1 {
+            let t = m.trailing
+            guard t.count >= 16 else { return "?" }
+            let len = Int(le(t, 4)); let start = 16
+            if start + len <= t.count { return String(bytes: t[start..<start+len], encoding: .utf16LittleEndian) ?? "?" }
+        }
+        return "(untitled)"
+    }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        for ds in db.root.children where ds.magic == "mhsd" {
+            let type = ds.u32(at: 12)
+            guard type == 2 || type == 3, let mhlp = ds.firstChild("mhlp") else { continue }
+            let pls = mhlp.children.filter { $0.magic == "mhyp" }
+            print("mhsd type=\(type): \(pls.count) playlists")
+            for (i, pl) in pls.enumerated() {
+                let mhips = pl.children.filter { $0.magic == "mhip" }.count
+                let hasT52 = pl.children.contains { $0.magic == "mhod" && $0.u32(at: 12) == 52 }
+                let numMhod = pl.children.filter { $0.magic == "mhod" }.count
+                print("  [\(i)] \"\(decodeTitle(pl))\" mhips=\(mhips) mhods=\(numMhod) master=\(hasT52) hdrLen=\(pl.headerLen)")
+            }
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "art-repair" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     do {

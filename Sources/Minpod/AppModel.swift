@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
     @Published var isBusy = false
     @Published var capacity: String = ""
     @Published var fractionUsed: Double = 0
+    @Published var playlists: [ITunesDB.PlaylistInfo] = []
 
     private let detector = IPodDetector()
 
@@ -180,6 +181,42 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Playlists
+
+    private func runPlaylist(_ statusMsg: String, _ work: @escaping @Sendable (SyncEngine) throws -> Void) {
+        guard let dev = device, !isBusy else { return }
+        isBusy = true
+        status = statusMsg
+        Task.detached(priority: .userInitiated) {
+            do {
+                try work(SyncEngine(device: dev))
+                await MainActor.run { self.isBusy = false; self.status = "Done — click Eject to update the iPod"; self.loadLibrary() }
+            } catch {
+                await MainActor.run { self.isBusy = false; self.status = "Playlist error: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    func createPlaylist(name: String, withTracks ids: [UInt32] = []) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        runPlaylist("Creating playlist…") { eng in
+            let pid = try eng.createPlaylist(name: trimmed)
+            if !ids.isEmpty { try eng.addToPlaylist(id: pid, trackIds: ids) }
+        }
+    }
+    func renamePlaylist(id: UInt64, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        runPlaylist("Renaming playlist…") { try $0.renamePlaylist(id: id, name: trimmed) }
+    }
+    func deletePlaylist(id: UInt64) {
+        runPlaylist("Deleting playlist…") { try $0.deletePlaylist(id: id) }
+    }
+    func addToPlaylist(id: UInt64, trackIds: [UInt32]) {
+        runPlaylist("Adding to playlist…") { try $0.addToPlaylist(id: id, trackIds: trackIds) }
+    }
+
     func eject() {
         guard let dev = device, !isBusy else { return }
         do {
@@ -200,8 +237,10 @@ final class AppModel: ObservableObject {
             do {
                 let db = try ITunesDB.read(from: dev)
                 let loaded = db.tracks
+                let pls = db.userPlaylists
                 await MainActor.run {
                     self.tracks = loaded
+                    self.playlists = pls
                     self.status = "\(loaded.count) songs on \(dev.displayName)"
                     self.isBusy = false
                     self.updateCapacity()

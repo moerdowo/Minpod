@@ -231,6 +231,27 @@ public struct SyncEngine {
         return trimmed.isEmpty ? "Untitled" : String(trimmed.prefix(180))
     }
 
+    // MARK: Playlists
+
+    private func mutate(_ body: (ITunesDB) throws -> Void) throws {
+        let db = try ITunesDB.read(from: device)
+        let scheme = ChecksumScheme.detect(in: db)
+        guard scheme.isSupported else { throw ChecksumError.unsupported(scheme.label) }
+        try body(db)
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: device.firewireGUID)
+        try writeDatabase(bytes)
+    }
+
+    public func createPlaylist(name: String) throws -> UInt64 {
+        var pid: UInt64 = 0
+        try mutate { pid = $0.createPlaylist(name: name) }
+        return pid
+    }
+    public func renamePlaylist(id: UInt64, name: String) throws { try mutate { $0.renamePlaylist(id: id, name: name) } }
+    public func deletePlaylist(id: UInt64) throws { try mutate { $0.deletePlaylist(id: id) } }
+    public func addToPlaylist(id: UInt64, trackIds: [UInt32]) throws { try mutate { $0.addToPlaylist(id: id, trackIds: trackIds) } }
+
     /// Edit a track's metadata / rating and write the database.
     public func editTrack(id: UInt32, title: String?, artist: String?, album: String?,
                           genre: String?, rating: Int?) throws {

@@ -22,13 +22,17 @@ the iPod's database format directly and **adds** songs without erasing anything.
 
 ## Features
 
-- **Drag and drop** — drop `mp3` / `m4a` / `aac` / `aiff` / `wav` files onto the
-  window and they're copied and added to the library automatically.
+- **Drag and drop** — drop files *or whole folders* onto the window; audio is
+  copied and added automatically (recursively for folders).
+- **Format conversion** — FLAC and other non-iPod formats are transcoded to AAC
+  on the fly so they play.
 - **Album art** — embedded covers are extracted, converted to the iPod's exact
-  thumbnail formats, and shown on the device.
-- **Remove songs** — select one or more tracks and delete them (and their files)
-  from the iPod.
-- **Reads your library** — see everything already on the iPod in a sortable list.
+  thumbnail formats, and shown on the device. Or set a cover manually from any image.
+- **Playlists** — create, rename, delete, and add songs to playlists from a sidebar.
+- **Edit metadata** — change title/artist/album/genre and star rating in place.
+- **Remove & export** — delete songs (and their files), or copy songs back to your Mac.
+- **Duplicate detection** — songs already on the iPod are skipped on add.
+- **Library + capacity** — sortable track list with ratings/play counts and free-space readout.
 - **Safe writes** — the database is backed up before every change and written
   atomically, with the device checksum recomputed so the iPod accepts it.
 - **One-click eject** — flush and unmount safely from the toolbar.
@@ -88,8 +92,8 @@ reproduces what iTunes used to do:
 
 ## Limitations
 
-- No playlist creation/editing yet (add, remove, and browse are supported).
 - hash72 / hashAB devices (nano 5G+, Touch, iPhone) aren't supported.
+- Smart playlists and on-device playback aren't supported.
 - Don't let the Finder/Music app auto-sync the iPod, or it may replace its
   contents. Set the device to "manually manage music."
 

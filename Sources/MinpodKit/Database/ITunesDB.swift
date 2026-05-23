@@ -132,6 +132,115 @@ public final class ITunesDB {
         return path
     }
 
+    // MARK: Playlists
+
+    public struct PlaylistInfo: Sendable, Identifiable {
+        public let id: UInt64
+        public let name: String
+        public let trackIds: [UInt32]
+    }
+
+    /// The mhlp list headers that hold playlists (datasets that contain a
+    /// master/library playlist — typically type 2 and type 3).
+    private var playlistLists: [Chunk] {
+        var out: [Chunk] = []
+        for ds in root.children where ds.magic == "mhsd" {
+            guard let mhlp = ds.children.first(where: { $0.magic == "mhlp" }) else { continue }
+            if mhlp.children.contains(where: { pl in
+                pl.magic == "mhyp" && pl.children.contains { $0.magic == "mhod" && $0.u32(at: 12) == 52 }
+            }) { out.append(mhlp) }
+        }
+        return out
+    }
+
+    private func isMaster(_ mhyp: Chunk) -> Bool { mhyp.u8(at: 0x14) == 1 }
+    private func playlistTitle(_ mhyp: Chunk) -> String {
+        for m in mhyp.children where m.magic == "mhod" && m.u32(at: 12) == 1 {
+            if let s = decodeMHODString(m) { return s }
+        }
+        return "Untitled"
+    }
+
+    /// User (non-master) playlists, read from the first playlist dataset.
+    public var userPlaylists: [PlaylistInfo] {
+        guard let mhlp = playlistLists.first else { return [] }
+        return mhlp.children.filter { $0.magic == "mhyp" && !isMaster($0) }.map { pl in
+            PlaylistInfo(id: pl.u64(at: 0x1C), name: playlistTitle(pl),
+                         trackIds: pl.children.filter { $0.magic == "mhip" }.map { $0.u32(at: 0x18) })
+        }
+    }
+
+    private func setPlaylistTitle(_ mhyp: Chunk, _ name: String) {
+        let titleMhod = TrackBuilder.makeStringMHOD(type: .title, name)
+        if let idx = mhyp.children.firstIndex(where: { $0.magic == "mhod" && $0.u32(at: 12) == 1 }) {
+            mhyp.children[idx] = titleMhod
+        } else {
+            mhyp.children.insert(titleMhod, at: 0)
+        }
+    }
+
+    /// Create an empty user playlist (mirrored across all playlist datasets).
+    @discardableResult
+    public func createPlaylist(name: String) -> UInt64 {
+        let pid = UInt64.random(in: 1...UInt64.max)
+        let now = TrackBuilder.macTimeNow()
+        for mhlp in playlistLists {
+            guard let master = mhlp.children.first(where: { $0.magic == "mhyp" && isMaster($0) }) else { continue }
+            let pl = master.deepCopy()
+            // Keep only the title + settings mhods; drop the master-only indices.
+            pl.children = pl.children.filter { $0.magic == "mhod" && ($0.u32(at: 12) == 1 || $0.u32(at: 12) == 100) }
+            pl.setU8(at: 0x14, 0)                 // normal (not master)
+            pl.setU32(at: 0x0C, UInt32(pl.children.count))   // num_mhod
+            pl.setU32(at: 0x10, 0)                // num_items
+            pl.setU32(at: 0x18, now)              // timestamp
+            pl.setU64(at: 0x1C, pid)              // playlist id
+            setPlaylistTitle(pl, name)
+            pl.setU32(at: 0x0C, UInt32(pl.children.filter { $0.magic == "mhod" }.count))
+            mhlp.children.append(pl)
+        }
+        return pid
+    }
+
+    public func renamePlaylist(id: UInt64, name: String) {
+        forEachPlaylist(id: id) { setPlaylistTitle($0, name); $0.setU32(at: 0x0C, UInt32($0.children.filter { $0.magic == "mhod" }.count)) }
+    }
+
+    public func deletePlaylist(id: UInt64) {
+        for mhlp in playlistLists {
+            mhlp.children.removeAll { $0.magic == "mhyp" && !isMaster($0) && $0.u64(at: 0x1C) == id }
+        }
+    }
+
+    public func addToPlaylist(id: UInt64, trackIds: [UInt32]) {
+        forEachPlaylist(id: id) { mhyp in
+            let template = mhyp.children.first { $0.magic == "mhip" }
+                ?? masterMhip(in: mhyp)
+            guard let template else { return }
+            let existing = Set(mhyp.children.filter { $0.magic == "mhip" }.map { $0.u32(at: 0x18) })
+            for tid in trackIds where !existing.contains(tid) {
+                mhyp.children.append(TrackBuilder.makePlaylistItem(template: template, trackId: tid))
+            }
+            mhyp.setU32(at: 0x10, UInt32(mhyp.children.filter { $0.magic == "mhip" }.count))
+        }
+    }
+
+    private func masterMhip(in mhyp: Chunk) -> Chunk? {
+        for mhlp in playlistLists where mhlp.children.contains(where: { $0 === mhyp }) {
+            if let master = mhlp.children.first(where: { $0.magic == "mhyp" && isMaster($0) }) {
+                return master.children.first { $0.magic == "mhip" }
+            }
+        }
+        return nil
+    }
+
+    private func forEachPlaylist(id: UInt64, _ body: (Chunk) -> Void) {
+        for mhlp in playlistLists {
+            for pl in mhlp.children where pl.magic == "mhyp" && !isMaster(pl) && pl.u64(at: 0x1C) == id {
+                body(pl)
+            }
+        }
+    }
+
     /// Edit a track's string fields and/or star rating in place. Nil arguments
     /// are left unchanged. Caller should rebuildIndexes() afterwards.
     public func editTrack(id: UInt32, title: String? = nil, artist: String? = nil,
