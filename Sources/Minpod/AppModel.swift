@@ -7,6 +7,8 @@ final class AppModel: ObservableObject {
     @Published var tracks: [Track] = []
     @Published var status: String = "No iPod connected"
     @Published var isBusy = false
+    @Published var capacity: String = ""
+    @Published var fractionUsed: Double = 0
 
     private let detector = IPodDetector()
 
@@ -26,25 +28,48 @@ final class AppModel: ObservableObject {
                 status = "Connected: \(dev.displayName)"
                 loadLibrary()
             }
+            updateCapacity()
         } else {
             tracks = []
             status = "No iPod connected"
+            capacity = ""
+            fractionUsed = 0
         }
+    }
+
+    func updateCapacity() {
+        guard let dev = device,
+              let vals = try? dev.mountPoint.resourceValues(forKeys: [.volumeAvailableCapacityKey, .volumeTotalCapacityKey]),
+              let free = vals.volumeAvailableCapacity, let total = vals.volumeTotalCapacity, total > 0 else {
+            capacity = ""; fractionUsed = 0; return
+        }
+        let used = total - free
+        fractionUsed = Double(used) / Double(total)
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        capacity = "\(f.string(fromByteCount: Int64(free))) free of \(f.string(fromByteCount: Int64(total)))"
     }
 
     /// Auto-sync: dropped files are copied and inserted into the iPod immediately.
     func handleDrop(urls: [URL]) {
         guard let dev = device, !isBusy else { return }
-        let audio = urls.filter { AudioMetadata.supportedExtensions.contains($0.pathExtension.lowercased()) }
-        guard !audio.isEmpty else {
-            status = "No supported audio files in drop"
+        let fm = FileManager.default
+        let candidates = urls.filter { url in
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { return false }
+            if isDir.boolValue { return true } // folders are expanded by the engine
+            let ext = url.pathExtension.lowercased()
+            return AudioMetadata.supportedExtensions.contains(ext) || AudioConverter.convertibleExtensions.contains(ext)
+        }
+        guard !candidates.isEmpty else {
+            status = "No audio files or folders in drop"
             return
         }
         isBusy = true
-        status = "Adding \(audio.count) file\(audio.count == 1 ? "" : "s")…"
+        status = "Adding…"
         Task.detached(priority: .userInitiated) {
             do {
-                let result = try await SyncEngine(device: dev).add(files: audio)
+                let result = try await SyncEngine(device: dev).add(files: candidates)
                 await MainActor.run {
                     let n = result.added.count
                     var msg = n > 0
@@ -53,6 +78,7 @@ final class AppModel: ObservableObject {
                     if !result.skipped.isEmpty { msg += " · skipped \(result.skipped.count)" }
                     self.status = msg
                     self.isBusy = false
+                    self.updateCapacity()
                     self.loadLibrary()
                 }
             } catch {
@@ -110,6 +136,7 @@ final class AppModel: ObservableObject {
                     self.tracks = loaded
                     self.status = "\(loaded.count) songs on \(dev.displayName)"
                     self.isBusy = false
+                    self.updateCapacity()
                 }
             } catch {
                 await MainActor.run {

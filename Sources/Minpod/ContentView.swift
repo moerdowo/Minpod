@@ -45,8 +45,8 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(model.device?.displayName ?? "Minpod")
                     .font(.headline)
-                if let dev = model.device {
-                    Text("\(model.tracks.count) songs · \(dev.mountPoint.lastPathComponent)")
+                if model.device != nil {
+                    Text("\(model.tracks.count) songs\(model.capacity.isEmpty ? "" : " · \(model.capacity)")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

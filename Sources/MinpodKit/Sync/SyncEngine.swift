@@ -44,28 +44,53 @@ public struct SyncEngine {
         var added: [String] = []
         var skipped: [(String, String)] = []
         var copiedFiles: [URL] = [] // for rollback on failure
+        var tempFiles: [URL] = []   // converted files to clean up
         var artItems: [(dbid: UInt64, imageData: Data)] = []
+        defer { for t in tempFiles { try? fm.removeItem(at: t) } }
 
-        for file in files {
-            let ext = file.pathExtension.lowercased()
-            guard AudioMetadata.supportedExtensions.contains(ext) else {
-                skipped.append((file.lastPathComponent, "unsupported format .\(ext)"))
-                continue
+        // Drops may include folders; flatten to individual audio files.
+        let inputs = Self.expandToAudioFiles(files)
+        // For duplicate detection (title + artist, case-insensitive).
+        var seenKeys = Set(db.tracks.map { Self.dupKey($0.title, $0.artist) })
+
+        for input in inputs {
+            var src = input
+            var ext = input.pathExtension.lowercased()
+            // Convert formats the iPod can't play (e.g. FLAC) to AAC.
+            if !AudioMetadata.supportedExtensions.contains(ext) {
+                if let converted = await AudioConverter.toM4A(input) {
+                    src = converted; ext = "m4a"; tempFiles.append(converted)
+                } else {
+                    skipped.append((input.lastPathComponent, "unsupported format .\(ext)"))
+                    continue
+                }
             }
             do {
-                let meta = await AudioMetadata.read(url: file)
+                var meta = await AudioMetadata.read(url: src)
+                // For converted files the fallback title is the temp filename;
+                // use the original file's name instead (tags, if any, survive).
+                if src != input {
+                    let tempBase = src.deletingPathExtension().lastPathComponent
+                    if meta.title == tempBase { meta.title = input.deletingPathExtension().lastPathComponent }
+                }
+                let key = Self.dupKey(meta.title, meta.artist)
+                if seenKeys.contains(key) {
+                    skipped.append((input.lastPathComponent, "already on iPod"))
+                    continue
+                }
                 let (destURL, ipodPath) = try destination(forExtension: ext)
-                try fm.copyItem(at: file, to: destURL)
+                try fm.copyItem(at: src, to: destURL)
                 copiedFiles.append(destURL)
 
                 let dbid = UInt64.random(in: 1...UInt64.max)
                 let artSize = meta.artworkData.map { UInt32($0.count) }
                 try db.insertTrack(id: nextId, dbid: dbid, meta: meta, ipodPath: ipodPath, artworkSize: artSize)
                 if let art = meta.artworkData { artItems.append((dbid, art)) }
+                seenKeys.insert(key)
                 nextId += 1
                 added.append(meta.title)
             } catch {
-                skipped.append((file.lastPathComponent, error.localizedDescription))
+                skipped.append((input.lastPathComponent, error.localizedDescription))
             }
         }
 
@@ -122,6 +147,32 @@ public struct SyncEngine {
             try? fm.removeItem(at: fileURL(forIPodPath: path))
         }
         return trackIds.count
+    }
+
+    /// Flatten dropped folders into individual audio files (supported or
+    /// convertible), recursively.
+    static func expandToAudioFiles(_ urls: [URL]) -> [URL] {
+        let fm = FileManager.default
+        let exts = AudioMetadata.supportedExtensions.union(AudioConverter.convertibleExtensions)
+        var out: [URL] = []
+        for url in urls {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
+            if isDir.boolValue {
+                let e = fm.enumerator(at: url, includingPropertiesForKeys: nil,
+                                      options: [.skipsHiddenFiles])
+                while let f = e?.nextObject() as? URL {
+                    if exts.contains(f.pathExtension.lowercased()) { out.append(f) }
+                }
+            } else {
+                out.append(url)
+            }
+        }
+        return out.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    static func dupKey(_ title: String, _ artist: String) -> String {
+        (title.lowercased() + "\u{1}" + artist.lowercased())
     }
 
     /// Map a colon-separated iPod path (":iPod_Control:Music:F00:ABCD.mp3") to a URL.
