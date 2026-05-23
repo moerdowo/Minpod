@@ -56,6 +56,15 @@ struct ContentView: View {
                     .frame(width: 180)
             }
             if model.isBusy { ProgressView().controlSize(.small) }
+            if model.device != nil {
+                Button {
+                    model.eject()
+                } label: {
+                    Label("Eject", systemImage: "eject.fill")
+                }
+                .help("Eject the iPod (required before unplugging)")
+                .disabled(model.isBusy)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

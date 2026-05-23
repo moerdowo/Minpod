@@ -61,6 +61,18 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func eject() {
+        guard let dev = device, !isBusy else { return }
+        do {
+            try NSWorkspace.shared.unmountAndEjectDevice(at: dev.mountPoint)
+            status = "Ejected \(dev.displayName) — safe to unplug"
+            device = nil
+            tracks = []
+        } catch {
+            status = "Eject failed: \(error.localizedDescription)"
+        }
+    }
+
     func loadLibrary() {
         guard let dev = device else { return }
         isBusy = true
