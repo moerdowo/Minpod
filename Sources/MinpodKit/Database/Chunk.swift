@@ -76,6 +76,11 @@ public final class Chunk {
               trailing: trailing, hasTotalLen: hasTotalLen)
     }
 
+    public func u8(at offset: Int) -> UInt8 {
+        guard offset < header.count else { return 0 }
+        return header[offset]
+    }
+
     public func u16(at offset: Int) -> UInt16 {
         guard offset + 2 <= header.count else { return 0 }
         return UInt16(header[offset]) | (UInt16(header[offset + 1]) << 8)

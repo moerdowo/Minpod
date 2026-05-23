@@ -132,6 +132,27 @@ public final class ITunesDB {
         return path
     }
 
+    /// Edit a track's string fields and/or star rating in place. Nil arguments
+    /// are left unchanged. Caller should rebuildIndexes() afterwards.
+    public func editTrack(id: UInt32, title: String? = nil, artist: String? = nil,
+                          album: String? = nil, genre: String? = nil, rating: Int? = nil) {
+        guard let mhit = trackChunks.first(where: { $0.u32(at: 16) == id }) else { return }
+        func setString(_ type: MHODType, _ value: String) {
+            let mhod = TrackBuilder.makeStringMHOD(type: type, value)
+            if let idx = mhit.children.firstIndex(where: { $0.magic == "mhod" && $0.u32(at: 12) == type.rawValue }) {
+                mhit.children[idx] = mhod
+            } else {
+                mhit.children.append(mhod)
+            }
+        }
+        if let title { setString(.title, title) }
+        if let artist { setString(.artist, artist) }
+        if let album { setString(.album, album) }
+        if let genre { setString(.genre, genre) }
+        mhit.setU32(at: 0x0C, UInt32(mhit.children.filter { $0.magic == "mhod" }.count))
+        if let rating { mhit.setU8(at: 0x1F, UInt8(max(0, min(5, rating)) * 20)) }
+    }
+
     /// Regenerate the master playlist's sort/browse indices (mhod 52/53) so the
     /// iPod's Songs/Artists/Albums lists include current tracks. Must be called
     /// after inserting or removing tracks, before serialize.

@@ -516,6 +516,25 @@ if args.first == "remove", args.count >= 2 {
     RunLoop.main.run()
 }
 
+// edit <id> <title> <artist> <rating>: test the metadata/rating edit path.
+if args.first == "edit", args.count >= 5 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let id = UInt32(args[1]) ?? 0
+    Task {
+        defer { exit(0) }
+        do {
+            try SyncEngine(device: dev).editTrack(id: id, title: args[2], artist: args[3],
+                                                  album: nil, genre: nil, rating: Int(args[4]))
+            let db = try ITunesDB.read(from: dev)
+            if let t = db.tracks.first(where: { $0.id == id }) {
+                print("track \(id): \"\(t.title)\" / \(t.artist) · \(t.rating)★  plays=\(t.playCount)")
+            }
+            verifyHash58(db, guid: dev.firewireGUID ?? "")
+        } catch { print("ERROR: \(error)") }
+    }
+    RunLoop.main.run()
+}
+
 if args.first == "art-repair" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     do {

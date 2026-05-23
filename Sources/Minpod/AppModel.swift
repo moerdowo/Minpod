@@ -112,6 +112,29 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Edit a track's metadata and rating, then write to the iPod.
+    func editTrack(id: UInt32, title: String, artist: String, album: String, genre: String, rating: Int) {
+        guard let dev = device, !isBusy else { return }
+        isBusy = true
+        status = "Saving changes…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                try SyncEngine(device: dev).editTrack(id: id, title: title, artist: artist,
+                                                       album: album, genre: genre, rating: rating)
+                await MainActor.run {
+                    self.status = "Saved — click Eject to update the iPod"
+                    self.isBusy = false
+                    self.loadLibrary()
+                }
+            } catch {
+                await MainActor.run {
+                    self.status = "Edit failed: \(error.localizedDescription)"
+                    self.isBusy = false
+                }
+            }
+        }
+    }
+
     func eject() {
         guard let dev = device, !isBusy else { return }
         do {

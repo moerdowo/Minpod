@@ -30,6 +30,8 @@ public struct Track: Identifiable, Hashable, Sendable {
     public var trackNumber: UInt32
     public var year: UInt32
     public var ipodPath: String    // colon-separated, e.g. ":iPod_Control:Music:F00:ABCD.mp3"
+    public var rating: Int         // 0...5 stars
+    public var playCount: UInt32
 
     public var durationText: String {
         let total = Int(lengthMS) / 1000
@@ -38,7 +40,7 @@ public struct Track: Identifiable, Hashable, Sendable {
 
     public init(id: UInt32, dbid: UInt64, title: String, artist: String, album: String,
                 genre: String, lengthMS: UInt32, sizeBytes: UInt32, trackNumber: UInt32,
-                year: UInt32, ipodPath: String) {
+                year: UInt32, ipodPath: String, rating: Int = 0, playCount: UInt32 = 0) {
         self.id = id
         self.dbid = dbid
         self.title = title
@@ -50,6 +52,8 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.trackNumber = trackNumber
         self.year = year
         self.ipodPath = ipodPath
+        self.rating = rating
+        self.playCount = playCount
     }
 }
 
@@ -76,7 +80,9 @@ extension Track {
             sizeBytes: mhit.u32(at: 0x24),
             trackNumber: mhit.u32(at: 0x2C),
             year: mhit.u32(at: 0x34),
-            ipodPath: string(.location)
+            ipodPath: string(.location),
+            rating: min(5, Int(mhit.u8(at: 0x1F)) / 20),
+            playCount: mhit.u32(at: 0x50)
         )
     }
 }

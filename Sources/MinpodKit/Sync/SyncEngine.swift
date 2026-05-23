@@ -175,6 +175,19 @@ public struct SyncEngine {
         (title.lowercased() + "\u{1}" + artist.lowercased())
     }
 
+    /// Edit a track's metadata / rating and write the database.
+    public func editTrack(id: UInt32, title: String?, artist: String?, album: String?,
+                          genre: String?, rating: Int?) throws {
+        let db = try ITunesDB.read(from: device)
+        let scheme = ChecksumScheme.detect(in: db)
+        guard scheme.isSupported else { throw ChecksumError.unsupported(scheme.label) }
+        db.editTrack(id: id, title: title, artist: artist, album: album, genre: genre, rating: rating)
+        db.rebuildIndexes()
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: device.firewireGUID)
+        try writeDatabase(bytes)
+    }
+
     /// Map a colon-separated iPod path (":iPod_Control:Music:F00:ABCD.mp3") to a URL.
     func fileURL(forIPodPath path: String) -> URL {
         var url = device.mountPoint
