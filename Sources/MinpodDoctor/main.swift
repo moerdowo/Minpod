@@ -433,6 +433,24 @@ if args.first == "sync-masters" {
     exit(0)
 }
 
+// delete-track <id>: remove a track from the DB (not the audio file).
+if args.first == "delete-track", args.count >= 2 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let id = UInt32(args[1]) ?? 0
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let scheme = ChecksumScheme.detect(in: db)
+        let path = db.deleteTrack(id: id)
+        db.rebuildIndexes()
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        try Data(bytes).write(to: dev.iTunesDBURL)
+        print("deleted track \(id) (path \(path ?? "?")); tracks now \(db.trackChunks.count); wrote \(bytes.count) bytes")
+        verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "reindex" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     func le(_ a: [UInt8], _ o: Int) -> UInt32 {

@@ -107,6 +107,30 @@ public final class ITunesDB {
         return added
     }
 
+    /// Remove a track from the track list and every playlist that references it.
+    /// Caller should rebuildIndexes() afterwards. Returns the track's iPod path.
+    @discardableResult
+    public func deleteTrack(id: UInt32) -> String? {
+        var path: String?
+        if let mhlt = trackListHeader {
+            if let mhit = mhlt.children.first(where: { $0.magic == "mhit" && $0.u32(at: 16) == id }) {
+                path = Track.from(mhit: mhit).ipodPath
+            }
+            mhlt.children.removeAll { $0.magic == "mhit" && $0.u32(at: 16) == id }
+        }
+        for ds in root.children where ds.magic == "mhsd" {
+            guard let listHeader = ds.children.first else { continue }
+            for pl in listHeader.children where pl.magic == "mhyp" {
+                let before = pl.children.count
+                pl.children.removeAll { $0.magic == "mhip" && $0.u32(at: 0x18) == id }
+                if pl.children.count != before {
+                    pl.setU32(at: 0x10, UInt32(pl.children.filter { $0.magic == "mhip" }.count))
+                }
+            }
+        }
+        return path
+    }
+
     /// Regenerate the master playlist's sort/browse indices (mhod 52/53) so the
     /// iPod's Songs/Artists/Albums lists include current tracks. Must be called
     /// after inserting or removing tracks, before serialize.

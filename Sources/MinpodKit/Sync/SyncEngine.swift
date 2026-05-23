@@ -68,6 +68,7 @@ public struct SyncEngine {
 
         guard !added.isEmpty else { return SyncResult(added: added, skipped: skipped) }
 
+        db.syncMasterPlaylists() // heal any master playlist left out of sync
         db.rebuildIndexes()
         var bytes = db.serialize()
         do {
