@@ -68,6 +68,13 @@ public final class ITunesDB {
         mpl.setU32(at: 0x10, UInt32(mpl.children.filter { $0.magic == "mhip" }.count))
     }
 
+    /// Regenerate the master playlist's sort/browse indices (mhod 52/53) so the
+    /// iPod's Songs/Artists/Albums lists include current tracks. Must be called
+    /// after inserting or removing tracks, before serialize.
+    public func rebuildIndexes() {
+        LibraryIndex.rebuild(self)
+    }
+
     /// Serialize back to bytes (checksums applied separately).
     public func serialize() -> [UInt8] {
         ChunkSerializer().serialize(root)

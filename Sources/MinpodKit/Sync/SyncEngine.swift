@@ -68,6 +68,7 @@ public struct SyncEngine {
 
         guard !added.isEmpty else { return SyncResult(added: added, skipped: skipped) }
 
+        db.rebuildIndexes()
         var bytes = db.serialize()
         do {
             try scheme.apply(to: &bytes, firewireGUID: device.firewireGUID)

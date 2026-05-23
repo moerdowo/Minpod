@@ -177,6 +177,83 @@ if args.first == "playlists" {
     exit(0)
 }
 
+// mpl-mhods: dump the master playlist's mhod children (types + sizes).
+if args.first == "mpl-mhods" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        guard let mpl = db.masterPlaylist else { print("no MPL"); exit(0) }
+        let mhods = mpl.children.filter { $0.magic == "mhod" }
+        print("MPL mhods: \(mhods.count), mhips: \(mpl.children.filter { $0.magic == "mhip" }.count)")
+        func le(_ a: [UInt8], _ o: Int) -> UInt32 {
+            (o + 4 <= a.count) ? UInt32(a[o]) | (UInt32(a[o+1])<<8) | (UInt32(a[o+2])<<16) | (UInt32(a[o+3])<<24) : 0
+        }
+        for m in mhods {
+            let type = m.u32(at: 12)
+            let sortType = le(m.trailing, 0)
+            let count = le(m.trailing, 4)
+            print("  mhod type=\(type) sortType=0x\(String(sortType, radix:16)) count=\(count) totalLen=\(m.byteLength)")
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// reindex: rebuild the master-playlist sort indices on the connected iPod,
+// validate them structurally, then re-checksum and write. Fixes tracks that
+// were added to the DB but are missing from the browse indices.
+if args.first == "reindex" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    func le(_ a: [UInt8], _ o: Int) -> UInt32 {
+        UInt32(a[o]) | (UInt32(a[o+1])<<8) | (UInt32(a[o+2])<<16) | (UInt32(a[o+3])<<24)
+    }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let n = db.trackChunks.count
+        let scheme = ChecksumScheme.detect(in: db)
+        print("tracks=\(n) scheme=\(scheme.label)")
+        db.rebuildIndexes()
+
+        // Validate: every type-52 must be a permutation of 0..<n; every type-53
+        // must cover all n entries with contiguous starts.
+        guard let mpl = db.masterPlaylist else { print("no MPL"); exit(1) }
+        var ok = true
+        for m in mpl.children where m.magic == "mhod" {
+            let t = m.u32(at: 12); let sortRaw = le(m.trailing, 0); let count = Int(le(m.trailing, 4))
+            if t == 52 {
+                var seen = Set<UInt32>()
+                let base = 48
+                for i in 0..<count { seen.insert(le(m.trailing, base + i*4)) }
+                let perm = (count == n) && (seen.count == n) && (seen.allSatisfy { $0 < UInt32(n) })
+                if !perm { ok = false; print("  BAD type52 sort=0x\(String(sortRaw,radix:16)) count=\(count) unique=\(seen.count)") }
+            } else if t == 53 {
+                var total: UInt32 = 0; var pos: UInt32 = 0; var contiguous = true
+                let base = 16
+                for i in 0..<count {
+                    let start = le(m.trailing, base + i*12 + 4)
+                    let c = le(m.trailing, base + i*12 + 8)
+                    if start != pos { contiguous = false }
+                    pos += c; total += c
+                }
+                if total != UInt32(n) || !contiguous { ok = false; print("  BAD type53 sort=0x\(String(sortRaw,radix:16)) total=\(total) contiguous=\(contiguous)") }
+            }
+        }
+        guard ok else { print("VALIDATION FAILED — not writing"); exit(1) }
+        print("validation OK — all indices are complete permutations")
+
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        // backup current then write
+        let dbURL = dev.iTunesDBURL
+        let bak = dev.iTunesDir.appendingPathComponent("iTunesDB.prereindex-backup")
+        if !FileManager.default.fileExists(atPath: bak.path) { try? FileManager.default.copyItem(at: dbURL, to: bak) }
+        try Data(bytes).write(to: dbURL)
+        print("wrote \(bytes.count) bytes. Reading back…")
+        let after = try ITunesDB.read(from: dev)
+        verifyHash58(after, guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "add", args.count >= 2 {
     let files = args.dropFirst().map { URL(fileURLWithPath: $0) }
     guard let dev = IPodDetector().currentDevices().first else {
