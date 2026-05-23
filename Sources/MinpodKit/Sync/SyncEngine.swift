@@ -74,13 +74,11 @@ public struct SyncEngine {
         // Write album art (best-effort: failure shouldn't block the music sync).
         if !artItems.isEmpty {
             do {
-                let idMap = try ArtworkWriter(device: device).addImages(artItems)
-                // Link each track to its ArtworkDB image via mhii_link (0x160).
-                for mhit in db.trackChunks {
-                    if let imageId = idMap[mhit.u64(at: 0x70)] {
-                        mhit.setU32(at: 0x160, imageId)
-                    }
-                }
+                let writer = ArtworkWriter(device: device)
+                try writer.addImages(artItems)
+                // Link every track to the image whose song_id matches its dbid
+                // (mhii_link at 0x160 — what the iPod classic uses to resolve art).
+                try writer.repairLinks(in: db)
             } catch { skipped.append(("album art", error.localizedDescription)) }
         }
 

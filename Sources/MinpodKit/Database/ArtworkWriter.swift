@@ -113,6 +113,34 @@ public struct ArtworkWriter {
         return done
     }
 
+    /// Map of track dbid (mhii.song_id) -> ArtworkDB image_id, the authoritative
+    /// source for each track's mhii_link.
+    public func linkMap() throws -> [UInt64: UInt32] {
+        guard isAvailable else { return [:] }
+        let root = try ChunkParser([UInt8](Data(contentsOf: artworkDBURL))).parse()
+        guard let mhli = root.children
+                .first(where: { $0.magic == "mhsd" && $0.u16(at: 0x0C) == 1 })?
+                .children.first(where: { $0.magic == "mhli" }) else { return [:] }
+        var map: [UInt64: UInt32] = [:]
+        for mhii in mhli.children where mhii.magic == "mhii" {
+            map[mhii.u64(at: O.mhiiSongId)] = mhii.u32(at: O.mhiiImageId)
+        }
+        return map
+    }
+
+    /// Set mhii_link (mhit 0x160) on every track to the image whose song_id
+    /// matches its dbid. Repairs links that point at the wrong image.
+    @discardableResult
+    public func repairLinks(in db: ITunesDB) throws -> Int {
+        let map = try linkMap()
+        var fixed = 0
+        for mhit in db.trackChunks {
+            guard let imageId = map[mhit.u64(at: 0x70)] else { continue }
+            if mhit.u32(at: 0x160) != imageId { mhit.setU32(at: 0x160, imageId); fixed += 1 }
+        }
+        return fixed
+    }
+
     private func thumbnailFormats(of mhii: Chunk) -> [ThumbFormat] {
         var out: [ThumbFormat] = []
         for mhod in mhii.children where mhod.magic == "mhod" {

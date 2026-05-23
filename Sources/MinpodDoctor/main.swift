@@ -471,6 +471,49 @@ if args.first == "dump-thumb" {
     exit(0)
 }
 
+// art-audit: cross-check every track's artwork link against the ArtworkDB.
+if args.first == "art-audit" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let aw = try ChunkParser([UInt8](Data(contentsOf: dev.controlDir.appendingPathComponent("Artwork/ArtworkDB")))).parse()
+        let mhli = aw.children.first { $0.magic == "mhsd" && $0.u16(at:0x0C)==1 }?.children.first
+        var imgToSong: [UInt32: UInt64] = [:]
+        for mhii in (mhli?.children ?? []) where mhii.magic == "mhii" {
+            imgToSong[mhii.u32(at: 0x10)] = mhii.u64(at: 0x14)
+        }
+        print("ArtworkDB images: \(imgToSong.count), mhfd next_id=\(aw.u32(at: 0x1C))")
+        print("image_ids: \(imgToSong.keys.sorted())")
+        for mhit in db.trackChunks {
+            let hasArt = mhit.header.count > 0xA4 ? mhit.header[0xA4] : 0
+            let link = mhit.u32(at: 0x160)
+            let dbid = mhit.u64(at: 0x70)
+            guard hasArt != 0 || link != 0 else { continue }
+            let matchSong = imgToSong[link]
+            let ok = (matchSong == dbid)
+            print("  [\(mhit.u32(at: 16))] hasArt=\(hasArt) mhii_link=\(link) dbid=\(String(dbid,radix:16)) -> mhii.song_id=\(matchSong.map { String($0, radix:16) } ?? "MISSING") \(ok ? "OK" : "❌ MISMATCH")")
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// art-repair: fix every track's mhii_link to point at the image matching its
+// dbid, then re-checksum and write the iTunesDB.
+if args.first == "art-repair" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let scheme = ChecksumScheme.detect(in: db)
+        let fixed = try ArtworkWriter(device: dev).repairLinks(in: db)
+        print("fixed mhii_link on \(fixed) track(s)")
+        guard fixed > 0 else { exit(0) }
+        var bytes = db.serialize(); try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        try Data(bytes).write(to: dev.iTunesDBURL)
+        verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "art-test" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     // Generate a 500x500 test cover as PNG data.
