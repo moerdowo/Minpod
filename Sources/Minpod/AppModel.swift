@@ -46,7 +46,10 @@ final class AppModel: ObservableObject {
             do {
                 let result = try await SyncEngine(device: dev).add(files: audio)
                 await MainActor.run {
-                    var msg = "Added \(result.added.count) song\(result.added.count == 1 ? "" : "s")"
+                    let n = result.added.count
+                    var msg = n > 0
+                        ? "Added \(n) song\(n == 1 ? "" : "s") — click Eject, then they appear on the iPod"
+                        : "Nothing added"
                     if !result.skipped.isEmpty { msg += " · skipped \(result.skipped.count)" }
                     self.status = msg
                     self.isBusy = false

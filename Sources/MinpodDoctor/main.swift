@@ -128,6 +128,55 @@ if args.first == "simulate-add", args.count >= 2 {
 
 // add <audiofile...>: REAL write — copy files onto the connected iPod and
 // insert them into its iTunesDB (backs up the original first).
+// verify-files: list tracks whose referenced audio file is missing on disk,
+// and show the newest tracks with their resolved paths.
+if args.first == "verify-files" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let tracks = db.tracks
+        func resolve(_ p: String) -> URL {
+            let rel = p.replacingOccurrences(of: ":", with: "/")
+            return dev.mountPoint.appendingPathComponent(rel)
+        }
+        var missing = 0
+        for t in tracks {
+            let url = resolve(t.ipodPath)
+            if !FileManager.default.fileExists(atPath: url.path) { missing += 1 }
+        }
+        print("tracks: \(tracks.count), missing files: \(missing)")
+        print("--- newest 5 tracks by id ---")
+        for t in tracks.sorted(by: { $0.id > $1.id }).prefix(5) {
+            let url = resolve(t.ipodPath)
+            let exists = FileManager.default.fileExists(atPath: url.path)
+            print("  [\(t.id)] \"\(t.title)\" len=\(t.lengthMS)ms size=\(t.sizeBytes)  exists=\(exists)")
+            print("       path=\(t.ipodPath)")
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// playlists: inspect the playlist datasets and whether they reference the newest track.
+if args.first == "playlists" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let newest = db.tracks.map { $0.id }.max() ?? 0
+        print("newest track id: \(newest), track-list count: \(db.trackChunks.count)")
+        guard let mhlp = db.dataset(type: 2)?.firstChild("mhlp") else { print("no mhlp"); exit(0) }
+        let playlists = mhlp.children.filter { $0.magic == "mhyp" }
+        print("playlists (mhyp): \(playlists.count)")
+        for (i, pl) in playlists.enumerated() {
+            let numItems = pl.u32(at: 0x10)
+            let mhips = pl.children.filter { $0.magic == "mhip" }
+            let hasNewest = mhips.contains { $0.u32(at: 0x18) == newest }
+            let numMhod = pl.u32(at: 0x0C)
+            print("  [\(i)] num_mhod=\(numMhod) num_items(0x10)=\(numItems) actual mhip=\(mhips.count) containsNewest=\(hasNewest)")
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "add", args.count >= 2 {
     let files = args.dropFirst().map { URL(fileURLWithPath: $0) }
     guard let dev = IPodDetector().currentDevices().first else {
