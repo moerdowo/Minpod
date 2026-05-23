@@ -37,7 +37,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>Minpod</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleVersion</key><string>1</string>
-    <key>CFBundleShortVersionString</key><string>0.1</string>
+    <key>CFBundleShortVersionString</key><string>1.0.0</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.music</string>

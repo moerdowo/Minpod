@@ -47,7 +47,32 @@ the iPod's database format directly and **adds** songs without erasing anything.
 | iPod Classic (all generations) | hash58 | ✅ |
 | iPod nano 5G+ / Touch / iPhone | hash72 / hashAB | ❌ not supported |
 
-## Install / Build
+## Download
+
+Grab `Minpod.dmg` from the [latest release](https://github.com/moerdowo/Minpod/releases/latest),
+open it, and drag **Minpod** into **Applications**.
+
+> [!IMPORTANT]
+> Minpod is **not notarized** (no paid Apple Developer account), so Gatekeeper
+> blocks it on first launch with *"Minpod is damaged / cannot be opened because
+> Apple cannot check it for malicious software."* This is expected. To allow it:
+
+**Easiest — Terminal (run once):**
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Minpod.app
+```
+
+Then open Minpod normally.
+
+**Or via the UI:** try to open Minpod, then go to **System Settings → Privacy &
+Security**, scroll down, and click **Open Anyway** next to the Minpod message.
+(On older macOS you can also right-click the app → **Open** → **Open**.)
+
+On first write, macOS asks to allow access to files on a removable volume —
+**click Allow** (Minpod is unsandboxed so it can read/write the iPod).
+
+## Build from source
 
 Requires macOS 14+ and the Swift toolchain (Xcode).
 
@@ -55,12 +80,9 @@ Requires macOS 14+ and the Swift toolchain (Xcode).
 git clone https://github.com/moerdowo/Minpod.git
 cd Minpod
 ./scripts/bundle.sh          # builds build/Minpod.app
+# or: ./scripts/make-dmg.sh  # builds build/Minpod.dmg
 open build/Minpod.app
 ```
-
-Minpod is **not sandboxed** so it can read and write the iPod's removable
-volume. On first write, macOS may ask to allow access to files on a removable
-volume — approve it.
 
 ## Usage
 
