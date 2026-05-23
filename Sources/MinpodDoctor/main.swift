@@ -201,6 +201,97 @@ if args.first == "mpl-mhods" {
 // reindex: rebuild the master-playlist sort indices on the connected iPod,
 // validate them structurally, then re-checksum and write. Fixes tracks that
 // were added to the DB but are missing from the browse indices.
+// compare-index <dbpath>: decode the title type-52 index from a database and
+// print titles in that index order, to confirm the index = 0-based positions
+// into the track list sorted alphabetically.
+if args.first == "compare-index", args.count >= 2 {
+    func le(_ a: [UInt8], _ o: Int) -> UInt32 {
+        UInt32(a[o]) | (UInt32(a[o+1])<<8) | (UInt32(a[o+2])<<16) | (UInt32(a[o+3])<<24)
+    }
+    do {
+        let db = try ITunesDB.parse(try Data(contentsOf: URL(fileURLWithPath: args[1])))
+        let tracks = db.tracks
+        print("tracks: \(tracks.count)")
+        guard let mpl = db.masterPlaylist else { print("no MPL"); exit(1) }
+        for m in mpl.children where m.magic == "mhod" && m.u32(at: 12) == 52 && le(m.trailing, 0) == 0x03 {
+            let count = Int(le(m.trailing, 4))
+            var positions: [Int] = []
+            for i in 0..<count { positions.append(Int(le(m.trailing, 48 + i*4))) }
+            let inRange = positions.allSatisfy { $0 < tracks.count }
+            let isPerm = Set(positions).count == count && count == tracks.count
+            print("title index: count=\(count) inRange=\(inRange) permutation=\(isPerm)")
+            print("first 15 titles in index order (should be ~alphabetical):")
+            for p in positions.prefix(15) where p < tracks.count {
+                print("   [\(p)] \(tracks[p].title)")
+            }
+            break
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// diff-mhit <id1> <id2>: compare the full mhit header bytes of two tracks,
+// highlighting offsets that differ (to spot unique fields not changed on insert).
+if args.first == "diff-mhit", args.count >= 3 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let id1 = UInt32(args[1]) ?? 0, id2 = UInt32(args[2]) ?? 0
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let mhits = db.trackChunks
+        guard let a = mhits.first(where: { $0.u32(at: 16) == id1 }),
+              let b = mhits.first(where: { $0.u32(at: 16) == id2 }) else { print("track not found"); exit(1) }
+        print("mhit \(id1): headerLen=\(a.headerLen) mhods=\(a.children.count)")
+        print("mhit \(id2): headerLen=\(b.headerLen) mhods=\(b.children.count)")
+        let n = min(a.header.count, b.header.count)
+        print("differing 4-byte words (offset: id\(id1)  id\(id2)):")
+        var off = 0
+        while off + 4 <= n {
+            let va = a.u32(at: off), vb = b.u32(at: off)
+            if va != vb {
+                print(String(format: "  0x%02x: %08x  %08x", off, va, vb))
+            }
+            off += 4
+        }
+        print("--- bytes IDENTICAL beyond 0x70 (potential shared unique fields) ---")
+        off = 0x78
+        while off + 4 <= n {
+            let va = a.u32(at: off), vb = b.u32(at: off)
+            if va == vb && va != 0 {
+                print(String(format: "  0x%02x: %08x (same, nonzero)", off, va))
+            }
+            off += 4
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// repair-dbid: fix tracks whose secondary persistent-id copy (0xA8) doesn't
+// match the primary (0x70) — the cause of cloned tracks being deduped away.
+if args.first == "repair-dbid" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let scheme = ChecksumScheme.detect(in: db)
+        var fixed = 0
+        for mhit in db.trackChunks {
+            let primary = mhit.u64(at: 0x70)
+            if mhit.u64(at: 0xA8) != primary {
+                mhit.setU64(at: 0xA8, primary)
+                fixed += 1
+            }
+        }
+        print("tracks=\(db.trackChunks.count) scheme=\(scheme.label) fixed dbid mismatches=\(fixed)")
+        guard fixed > 0 else { print("nothing to fix"); exit(0) }
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        try Data(bytes).write(to: dev.iTunesDBURL)
+        print("wrote \(bytes.count) bytes")
+        let after = try ITunesDB.read(from: dev)
+        verifyHash58(after, guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "reindex" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     func le(_ a: [UInt8], _ o: Int) -> UInt32 {

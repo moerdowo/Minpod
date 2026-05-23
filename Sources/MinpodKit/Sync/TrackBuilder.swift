@@ -66,6 +66,11 @@ enum TrackBuilder {
     static func makeTrack(template: Chunk, id: UInt32, dbid: UInt64,
                           meta: AudioMetadata, ipodPath: String) -> Chunk {
         let mhit = template.deepCopy()
+        // The persistent track id (dbid) is stored in more than one place in the
+        // (large) mhit header. The iPod keys its library by this id, so every
+        // copy of the template's dbid must be replaced or the new track collides
+        // with the template and is deduped away. Capture before overwriting.
+        let templateDbid = mhit.u64(at: MHIT.songId)
 
         var mhods: [Chunk] = [makeStringMHOD(type: .title, meta.title)]
         if !meta.artist.isEmpty { mhods.append(makeStringMHOD(type: .artist, meta.artist)) }
@@ -92,10 +97,22 @@ enum TrackBuilder {
         mhit.setU32(at: MHIT.lastPlayed, 0)
         mhit.setU32(at: MHIT.lastModified, now)
         mhit.setU32(at: MHIT.bookmarkTime, 0)
-        mhit.setU64(at: MHIT.songId, dbid)
         mhit.setU16(at: MHIT.artworkCount, 0)
         mhit.setU32(at: MHIT.artworkSize, 0)
+        // Replace every copy of the template's dbid (e.g. at 0x70 and 0xA8) with
+        // the new unique id. A 64-bit id won't collide coincidentally elsewhere.
+        replaceDbid(in: mhit, from: templateDbid, to: dbid)
         return mhit
+    }
+
+    /// Overwrite every 4-byte-aligned 64-bit occurrence of `from` with `to`.
+    static func replaceDbid(in mhit: Chunk, from: UInt64, to: UInt64) {
+        guard from != 0 else { mhit.setU64(at: MHIT.songId, to); return }
+        var off = 0
+        while off + 8 <= mhit.header.count {
+            if mhit.u64(at: off) == from { mhit.setU64(at: off, to) }
+            off += 4
+        }
     }
 
     /// Build a master-playlist entry (mhip) referencing the new track.
