@@ -89,6 +89,43 @@ func verifyHash58(_ db: ITunesDB, guid: String) {
     }
 }
 
+// simulate-add <audiofile>: build the modified DB from the connected iPod's
+// real database + this audio file, apply hash58, write to /tmp, and validate —
+// all WITHOUT touching the device.
+if args.first == "simulate-add", args.count >= 2 {
+    let audio = URL(fileURLWithPath: args[1])
+    guard let dev = IPodDetector().currentDevices().first else {
+        print("No iPod connected."); exit(1)
+    }
+    print("Simulating add of \(audio.lastPathComponent) to \(dev.displayName)")
+    Task {
+        defer { exit(0) }
+        do {
+            let db = try ITunesDB.read(from: dev)
+            let before = db.tracks.count
+            let scheme = ChecksumScheme.detect(in: db)
+            let meta = await AudioMetadata.read(url: audio)
+            print("  metadata: \"\(meta.title)\" / \(meta.artist) / \(meta.album)  \(meta.durationMS)ms \(meta.bitrate)kbps \(meta.sampleRate)Hz \(meta.fileSize)B")
+            print("  scheme: \(scheme.label)")
+            try db.insertTrack(id: db.nextTrackId, dbid: UInt64.random(in: 1...UInt64.max),
+                               meta: meta, ipodPath: ":iPod_Control:Music:F00:TEST.\(audio.pathExtension)")
+            var bytes = db.serialize()
+            try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+            let out = URL(fileURLWithPath: "/tmp/new_iTunesDB")
+            try Data(bytes).write(to: out)
+            let reparsed = try ITunesDB.parse(Data(bytes))
+            print("  tracks: \(before) -> \(reparsed.tracks.count)")
+            print("  mhbd total_len == file size: \(Int(reparsed.root.u32(at: 8)) == bytes.count)")
+            print("  new track present: \(reparsed.tracks.contains { $0.title == meta.title })")
+            print("  reparse OK, wrote \(bytes.count) bytes to /tmp/new_iTunesDB")
+            verifyHash58(reparsed, guid: dev.firewireGUID ?? "")
+        } catch {
+            print("  ERROR: \(error)")
+        }
+    }
+    RunLoop.main.run()
+}
+
 if let path = args.first {
     let url = URL(fileURLWithPath: path)
     do {

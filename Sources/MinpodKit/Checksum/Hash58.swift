@@ -105,12 +105,14 @@ public enum ChecksumError: Error, CustomStringConvertible {
     case tooSmall
     case badGUID(String)
     case missingGUID
+    case unsupported(String)
 
     public var description: String {
         switch self {
         case .tooSmall: return "iTunesDB too small to hold a checksum"
         case .badGUID(let g): return "Invalid FireWire GUID: \(g)"
         case .missingGUID: return "Device FireWire GUID is unknown; cannot compute checksum"
+        case .unsupported(let s): return "Unsupported checksum scheme: \(s)"
         }
     }
 }

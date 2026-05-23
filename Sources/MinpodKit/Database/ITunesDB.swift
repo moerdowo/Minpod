@@ -40,6 +40,34 @@ public final class ITunesDB {
         trackChunks.map(Track.from(mhit:))
     }
 
+    /// The master playlist (first mhyp in the type-2 dataset).
+    public var masterPlaylist: Chunk? {
+        dataset(type: 2)?.firstChild("mhlp")?.children.first { $0.magic == "mhyp" }
+    }
+
+    public var nextTrackId: UInt32 {
+        (trackChunks.map { $0.u32(at: 16) }.max() ?? 0) + 1
+    }
+
+    /// Insert a track into the track list and the master playlist, templating
+    /// from existing entries. Mutates the tree in place.
+    public func insertTrack(id: UInt32, dbid: UInt64, meta: AudioMetadata, ipodPath: String) throws {
+        guard let mhlt = trackListHeader,
+              let templateTrack = mhlt.children.first(where: { $0.magic == "mhit" }) else {
+            throw SyncError.noTrackTemplate
+        }
+        guard let mpl = masterPlaylist,
+              let templateItem = mpl.children.first(where: { $0.magic == "mhip" }) else {
+            throw SyncError.noMasterPlaylist
+        }
+        let mhit = TrackBuilder.makeTrack(template: templateTrack, id: id, dbid: dbid,
+                                          meta: meta, ipodPath: ipodPath)
+        mhlt.children.append(mhit)
+        let mhip = TrackBuilder.makePlaylistItem(template: templateItem, trackId: id)
+        mpl.children.append(mhip)
+        mpl.setU32(at: 0x10, UInt32(mpl.children.filter { $0.magic == "mhip" }.count))
+    }
+
     /// Serialize back to bytes (checksums applied separately).
     public func serialize() -> [UInt8] {
         ChunkSerializer().serialize(root)

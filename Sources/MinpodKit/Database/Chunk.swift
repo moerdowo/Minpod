@@ -53,6 +53,24 @@ public final class Chunk {
         for i in 0..<4 { header[offset + i] = UInt8((value >> (8 * i)) & 0xff) }
     }
 
+    public func setU16(at offset: Int, _ value: UInt16) {
+        guard offset + 2 <= header.count else { return }
+        header[offset] = UInt8(value & 0xff)
+        header[offset + 1] = UInt8((value >> 8) & 0xff)
+    }
+
+    public func setU64(at offset: Int, _ value: UInt64) {
+        guard offset + 8 <= header.count else { return }
+        for i in 0..<8 { header[offset + i] = UInt8(truncatingIfNeeded: value >> (8 * UInt64(i))) }
+    }
+
+    /// Recursively clone this chunk (header/trailing arrays are value types).
+    public func deepCopy() -> Chunk {
+        Chunk(magic: magic, header: header,
+              children: children.map { $0.deepCopy() },
+              trailing: trailing, hasTotalLen: hasTotalLen)
+    }
+
     public func u16(at offset: Int) -> UInt16 {
         guard offset + 2 <= header.count else { return 0 }
         return UInt16(header[offset]) | (UInt16(header[offset + 1]) << 8)

@@ -44,10 +44,12 @@ public final class IPodDetector {
         let name = resolvedName ?? url.lastPathComponent
         let deviceDir = url.appendingPathComponent("iPod_Control/Device")
         let info = DeviceInfo.read(deviceDir: deviceDir)
+        // SysInfo is frequently empty on modern iPods; fall back to the USB GUID.
+        let guid = info.firewireGUID ?? FireWireGUID.lookup()
         return IPodDevice(
             mountPoint: url,
             volumeName: name,
-            firewireGUID: info.firewireGUID,
+            firewireGUID: guid,
             modelNumber: info.modelNumber,
             serialNumber: info.serialNumber,
             family: IPodModelTable.family(modelNumber: info.modelNumber, hasSysInfoExtended: info.hasSysInfoExtended)

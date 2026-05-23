@@ -67,7 +67,7 @@ extension Track {
         }
         return Track(
             id: mhit.u32(at: 16),
-            dbid: mhit.u64(at: 0x60),
+            dbid: mhit.u64(at: 0x70),
             title: string(.title),
             artist: string(.artist),
             album: string(.album),
