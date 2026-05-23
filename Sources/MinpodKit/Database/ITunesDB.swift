@@ -66,7 +66,8 @@ public final class ITunesDB {
 
     /// Insert a track into the track list and every master playlist, templating
     /// from existing entries. Mutates the tree in place.
-    public func insertTrack(id: UInt32, dbid: UInt64, meta: AudioMetadata, ipodPath: String) throws {
+    public func insertTrack(id: UInt32, dbid: UInt64, meta: AudioMetadata, ipodPath: String,
+                            artworkSize: UInt32? = nil) throws {
         guard let mhlt = trackListHeader,
               let templateTrack = mhlt.children.first(where: { $0.magic == "mhit" }) else {
             throw SyncError.noTrackTemplate
@@ -75,7 +76,7 @@ public final class ITunesDB {
         guard !masters.isEmpty else { throw SyncError.noMasterPlaylist }
 
         let mhit = TrackBuilder.makeTrack(template: templateTrack, id: id, dbid: dbid,
-                                          meta: meta, ipodPath: ipodPath)
+                                          meta: meta, ipodPath: ipodPath, artworkSize: artworkSize)
         mhlt.children.append(mhit)
 
         for mpl in masters {

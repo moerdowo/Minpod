@@ -1,4 +1,6 @@
 import Foundation
+import CoreGraphics
+import ImageIO
 import MinpodKit
 
 // Command-line diagnostic for the iTunesDB engine. Validates the byte-exact
@@ -248,10 +250,25 @@ if args.first == "artwork-dump" {
                 var tally: [String: Int] = [:]
                 for c in mhii.children { tally[c.magic, default: 0] += 1 }
                 print("  first mhii: image_id=\(mhii.u32(at: 0x10)) song_id=\(String(mhii.u64(at: 0x14), radix:16)) children=\(tally)")
-                for mhni in mhii.descendants("mhni") {
-                    let mhodChildren = mhni.children.map { $0.magic }
-                    print("    mhni format=\(mhni.u32(at: 0x10)) offset=\(mhni.u32(at: 0x14)) size=\(mhni.u32(at: 0x18)) h=\(mhni.u16(at: 0x20)) w=\(mhni.u16(at: 0x22)) hdrLen=\(mhni.headerLen) children=\(mhodChildren)")
-                }
+                for container in mhii.children where container.magic == "mhod" {
+                    // mhod (container) trailing holds the mhni chunk.
+                    guard container.trailing.count >= 12,
+                          let mhni = try? ChunkParser(container.trailing).parse(), mhni.magic == "mhni" else {
+                        let typ = container.u16(at: 0x0C)
+                        let head = container.trailing.prefix(8).map { String(format: "%02x", $0) }.joined(separator: " ")
+                        print("    mhod (no mhni) type=\(typ) trailing=\(container.trailing.count) firstBytes=\(head)")
+                        continue
+                    }
+                    var fname = ""
+                    if let strMhod = mhni.children.first(where: { $0.magic == "mhod" }) {
+                        fname = String(bytes: strMhod.trailing, encoding: .utf16LittleEndian)?
+                            .filter { $0.isLetter || $0.isNumber || "._:/".contains($0) } ?? ""
+                    }
+                    let sz = Int(mhni.u32(at: 0x18))
+                    let h = Int(mhni.u16(at: 0x20)); let w = Int(mhni.u16(at: 0x22))
+                    let destW = (h > 0) ? sz / (h * 2) : 0
+                    print("    mhni format=\(mhni.u32(at: 0x10)) off=\(mhni.u32(at: 0x14)) size=\(sz) w=\(w) h=\(h) vpad=\(Int16(bitPattern: mhni.u16(at: 0x1C))) hpad=\(Int16(bitPattern: mhni.u16(at: 0x1E))) destW=\(destW) hdr=\(mhni.headerLen) file=\(fname)")
+}
             }
             if let mhif = lh?.children.first(where: { $0.magic == "mhif" }) {
                 for f in lh!.children where f.magic == "mhif" {
@@ -415,6 +432,104 @@ if args.first == "dup-track", args.count >= 3 {
         try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
         try Data(bytes).write(to: dev.iTunesDBURL)
         print("duplicated track \(srcId) as id \(newId) titled \"\(newTitle)\", wrote \(bytes.count) bytes")
+        verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// art-test: append a marker track ("AAA ART TEST") with a generated cover to
+// validate the artwork pipeline end-to-end.
+// dump-thumb: read the LAST slot of F1060 (320x320) from the .ithmb, decode
+// RGB565 LE back to a PNG at /tmp/thumb.png to visually verify conversion.
+if args.first == "dump-thumb" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let w = 320, h = 320, slot = 320*320*2
+    let url = dev.controlDir.appendingPathComponent("Artwork/F1060_1.ithmb")
+    do {
+        let data = [UInt8](try Data(contentsOf: url))
+        guard data.count >= slot else { print("file too small"); exit(1) }
+        let base = data.count - slot
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w*4,
+                            space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let ptr = ctx.data!.bindMemory(to: UInt8.self, capacity: w*h*4)
+        for y in 0..<h { for x in 0..<w {
+            let i = base + (y*w + x)*2
+            let p = UInt16(data[i]) | (UInt16(data[i+1]) << 8)
+            let r = UInt8(((p >> 11) & 0x1f) << 3), g = UInt8(((p >> 5) & 0x3f) << 2), b = UInt8((p & 0x1f) << 3)
+            let o = (y*w + x)*4
+            ptr[o] = r; ptr[o+1] = g; ptr[o+2] = b; ptr[o+3] = 255
+        }}
+        let img = ctx.makeImage()!
+        let outURL = URL(fileURLWithPath: "/tmp/thumb.png")
+        let md = NSMutableData()
+        let d2 = CGImageDestinationCreateWithData(md, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(d2, img, nil); CGImageDestinationFinalize(d2)
+        try (md as Data).write(to: outURL)
+        print("wrote /tmp/thumb.png (\(md.length) bytes) from last F1060 slot at offset \(base)")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+if args.first == "art-test" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    // Generate a 500x500 test cover as PNG data.
+    func makeTestPNG() -> Data? {
+        let w = 500, h = 500
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: w*4, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        // CG origin is bottom-left, so high-y = top. Red on top, green on bottom.
+        ctx.setFillColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1); ctx.fill(CGRect(x:0,y:h/2,width:w,height:h/2))
+        ctx.setFillColor(red: 0.1, green: 0.8, blue: 0.1, alpha: 1); ctx.fill(CGRect(x:0,y:0,width:w,height:h/2))
+        guard let img = ctx.makeImage() else { return nil }
+        let srcData = NSMutableData()
+        if let sd = CGImageDestinationCreateWithData(srcData, "public.png" as CFString, 1, nil) {
+            CGImageDestinationAddImage(sd, img, nil); CGImageDestinationFinalize(sd)
+            try? (srcData as Data).write(to: URL(fileURLWithPath: "/tmp/artsrc.png"))
+        }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, img, nil)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return out as Data
+    }
+    do {
+        guard let png = makeTestPNG() else { print("png gen failed"); exit(1) }
+        let db = try ITunesDB.read(from: dev)
+        guard let mhlt = db.trackListHeader, let src = db.trackChunks.first else { print("no template track"); exit(1) }
+        let newId = db.nextTrackId
+        let dup = src.deepCopy()
+        let srcDbid = src.u64(at: 0x70); let newDbid = UInt64.random(in: 1...UInt64.max)
+        var off = 0; while off+8 <= dup.header.count { if dup.u64(at: off) == srcDbid { dup.setU64(at: off, newDbid) }; off += 4 }
+        dup.setU32(at: 0x10, newId)
+        dup.setU16(at: 0x7C, 1); dup.setU16(at: 0x7E, 0xFFFF); dup.setU32(at: 0x80, UInt32(png.count))
+        if let tm = dup.children.first(where: { $0.magic == "mhod" && $0.u32(at: 12) == 1 }) {
+            let u = Array("AAA ART TEST".utf16).flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] }
+            var b: [UInt8] = []; func p(_ v: UInt32){ for i in 0..<4 { b.append(UInt8((v>>(8*UInt32(i)))&0xff)) } }
+            p(1); p(UInt32(u.count)); p(1); p(0); b.append(contentsOf: u); tm.trailing = b
+        }
+        mhlt.children.append(dup)
+        for mpl in db.masterPlaylists {
+            guard let t = mpl.children.first(where: { $0.magic == "mhip" }) else { continue }
+            let ip = t.deepCopy(); ip.setU32(at: 0x18, newId)
+            mpl.children.append(ip); mpl.setU32(at: 0x10, UInt32(mpl.children.filter { $0.magic == "mhip" }.count))
+        }
+        let got = try ArtworkWriter(device: dev).addImages([(newDbid, png)])
+        db.rebuildIndexes()
+        let scheme = ChecksumScheme.detect(in: db)
+        var bytes = db.serialize(); try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        try Data(bytes).write(to: dev.iTunesDBURL)
+        print("added 'AAA ART TEST' id=\(newId) dbid=\(String(newDbid,radix:16)) png=\(png.count)B artLinked=\(got.count)")
+        // validate ArtworkDB
+        let aw = try ChunkParser([UInt8](Data(contentsOf: dev.controlDir.appendingPathComponent("Artwork/ArtworkDB")))).parse()
+        let images = aw.children.first { $0.magic == "mhsd" && $0.u16(at:0x0C)==1 }?.children.first?.children.filter { $0.magic == "mhii" }.count ?? -1
+        print("ArtworkDB images now: \(images), round-trip: \(ChunkSerializer().serialize(aw) == [UInt8](try Data(contentsOf: dev.controlDir.appendingPathComponent("Artwork/ArtworkDB"))) ? "PASS" : "FAIL")")
+        for f in ["F1055_1.ithmb","F1060_1.ithmb","F1061_1.ithmb"] {
+            let s = (try? FileManager.default.attributesOfItem(atPath: dev.controlDir.appendingPathComponent("Artwork/\(f)").path)[.size] as? Int) ?? 0
+            print("  \(f): \(s ?? 0) bytes")
+        }
         verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
     } catch { print("ERROR: \(error)") }
     exit(0)

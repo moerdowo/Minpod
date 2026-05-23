@@ -44,6 +44,7 @@ public struct SyncEngine {
         var added: [String] = []
         var skipped: [(String, String)] = []
         var copiedFiles: [URL] = [] // for rollback on failure
+        var artItems: [(dbid: UInt64, imageData: Data)] = []
 
         for file in files {
             let ext = file.pathExtension.lowercased()
@@ -58,7 +59,9 @@ public struct SyncEngine {
                 copiedFiles.append(destURL)
 
                 let dbid = UInt64.random(in: 1...UInt64.max)
-                try db.insertTrack(id: nextId, dbid: dbid, meta: meta, ipodPath: ipodPath)
+                let artSize = meta.artworkData.map { UInt32($0.count) }
+                try db.insertTrack(id: nextId, dbid: dbid, meta: meta, ipodPath: ipodPath, artworkSize: artSize)
+                if let art = meta.artworkData { artItems.append((dbid, art)) }
                 nextId += 1
                 added.append(meta.title)
             } catch {
@@ -67,6 +70,12 @@ public struct SyncEngine {
         }
 
         guard !added.isEmpty else { return SyncResult(added: added, skipped: skipped) }
+
+        // Write album art (best-effort: failure shouldn't block the music sync).
+        if !artItems.isEmpty {
+            do { try ArtworkWriter(device: device).addImages(artItems) }
+            catch { skipped.append(("album art", error.localizedDescription)) }
+        }
 
         db.syncMasterPlaylists() // heal any master playlist left out of sync
         db.rebuildIndexes()

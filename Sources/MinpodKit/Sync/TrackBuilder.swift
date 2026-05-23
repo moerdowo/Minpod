@@ -64,7 +64,8 @@ enum TrackBuilder {
 
     /// Build a new track entry by templating an existing mhit.
     static func makeTrack(template: Chunk, id: UInt32, dbid: UInt64,
-                          meta: AudioMetadata, ipodPath: String) -> Chunk {
+                          meta: AudioMetadata, ipodPath: String,
+                          artworkSize: UInt32? = nil) -> Chunk {
         let mhit = template.deepCopy()
         // The persistent track id (dbid) is stored in more than one place in the
         // (large) mhit header. The iPod keys its library by this id, so every
@@ -97,8 +98,14 @@ enum TrackBuilder {
         mhit.setU32(at: MHIT.lastPlayed, 0)
         mhit.setU32(at: MHIT.lastModified, now)
         mhit.setU32(at: MHIT.bookmarkTime, 0)
-        mhit.setU16(at: MHIT.artworkCount, 0)
-        mhit.setU32(at: MHIT.artworkSize, 0)
+        if let artSize = artworkSize {
+            mhit.setU16(at: MHIT.artworkCount, 1)      // 1 artwork
+            mhit.setU16(at: 0x7E, 0xFFFF)              // matches iTunes "has art"
+            mhit.setU32(at: MHIT.artworkSize, artSize) // original cover byte size
+        } else {
+            mhit.setU16(at: MHIT.artworkCount, 0)
+            mhit.setU32(at: MHIT.artworkSize, 0)
+        }
         // Replace every copy of the template's dbid (e.g. at 0x70 and 0xA8) with
         // the new unique id. A 64-bit id won't collide coincidentally elsewhere.
         replaceDbid(in: mhit, from: templateDbid, to: dbid)

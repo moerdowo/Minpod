@@ -15,6 +15,7 @@ public struct AudioMetadata: Sendable {
     public var sampleRate: UInt32   // Hz
     public var fileSize: UInt32
     public var fileExtension: String
+    public var artworkData: Data?   // embedded cover image bytes (JPEG/PNG), if any
 
     /// Audio extensions an iPod classic / nano / video can play.
     public static let supportedExtensions: Set<String> = ["mp3", "m4a", "aac", "aif", "aiff", "wav", "m4b", "alac"]
@@ -27,7 +28,8 @@ public struct AudioMetadata: Sendable {
         var meta = AudioMetadata(
             title: fallbackTitle, artist: "", album: "", genre: "",
             durationMS: 0, trackNumber: 0, trackTotal: 0, year: 0,
-            bitrate: 0, sampleRate: 0, fileSize: fileSize, fileExtension: ext
+            bitrate: 0, sampleRate: 0, fileSize: fileSize, fileExtension: ext,
+            artworkData: nil
         )
 
         let asset = AVURLAsset(url: url)
@@ -47,6 +49,8 @@ public struct AudioMetadata: Sendable {
                     if meta.artist.isEmpty, let v = value, !v.isEmpty { meta.artist = v }
                 case .commonKeyAlbumName: if let v = value, !v.isEmpty { meta.album = v }
                 case .commonKeyType: if let v = value, !v.isEmpty { meta.genre = v }
+                case .commonKeyArtwork:
+                    if meta.artworkData == nil, let d = try? await item.load(.dataValue) { meta.artworkData = d }
                 default: break
                 }
             }
