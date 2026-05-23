@@ -227,6 +227,43 @@ if args.first == "mhsd-dump" {
     exit(0)
 }
 
+// artwork-dump: parse the device ArtworkDB, validate byte-exact round-trip,
+// and report the image formats (dimensions/size/offset) it actually uses.
+if args.first == "artwork-dump" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    func le16(_ a: [UInt8], _ o: Int) -> Int { (o+2<=a.count) ? Int(a[o]) | (Int(a[o+1])<<8) : 0 }
+    let url = dev.controlDir.appendingPathComponent("Artwork/ArtworkDB")
+    do {
+        let data = try Data(contentsOf: url)
+        let src = [UInt8](data)
+        let root = try ChunkParser(src).parse()
+        let out = ChunkSerializer().serialize(root)
+        print("ArtworkDB: \(src.count) bytes, magic=\(root.magic), children=\(root.children.count)")
+        print("round-trip exact: \(out == src ? "PASS ✅" : "FAIL ❌ (\(out.count) vs \(src.count))")")
+        for mhsd in root.children where mhsd.magic == "mhsd" {
+            let index = le16(mhsd.header, 12)
+            let lh = mhsd.children.first
+            print("mhsd index=\(index) listHeader=\(lh?.magic ?? "?") items=\(lh?.children.count ?? 0)")
+            if let mhii = lh?.children.first(where: { $0.magic == "mhii" }) {
+                var tally: [String: Int] = [:]
+                for c in mhii.children { tally[c.magic, default: 0] += 1 }
+                print("  first mhii: image_id=\(mhii.u32(at: 0x10)) song_id=\(String(mhii.u64(at: 0x14), radix:16)) children=\(tally)")
+                for mhni in mhii.descendants("mhni") {
+                    let mhodChildren = mhni.children.map { $0.magic }
+                    print("    mhni format=\(mhni.u32(at: 0x10)) offset=\(mhni.u32(at: 0x14)) size=\(mhni.u32(at: 0x18)) h=\(mhni.u16(at: 0x20)) w=\(mhni.u16(at: 0x22)) hdrLen=\(mhni.headerLen) children=\(mhodChildren)")
+                }
+            }
+            if let mhif = lh?.children.first(where: { $0.magic == "mhif" }) {
+                for f in lh!.children where f.magic == "mhif" {
+                    print("  mhif format=\(f.u32(at: 0x10)) image_size=\(f.u32(at: 0x14))")
+                }
+                _ = mhif
+            }
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "mpl-mhods" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     do {

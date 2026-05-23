@@ -29,8 +29,8 @@ public final class Chunk {
     }
 
     /// Magics that are "header + count of following sibling items" rather than
-    /// total-length containers.
-    public static let countHeaders: Set<String> = ["mhlt", "mhlp", "mhla", "mhsp"]
+    /// total-length containers. Includes ArtworkDB list headers (mhli/mhlf).
+    public static let countHeaders: Set<String> = ["mhlt", "mhlp", "mhla", "mhsp", "mhli", "mhlf"]
     /// Leaf chunks that carry an opaque data payload (no sub-chunks).
     public static let leafChunks: Set<String> = ["mhod"]
 
