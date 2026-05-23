@@ -20,6 +20,8 @@ enum TrackBuilder {
         static let year = 0x34
         static let bitrate = 0x38
         static let sampleRate32 = 0x3C  // stored as rate << 16
+        static let soundCheck = 0x4C
+        static let sampleRate2 = 0x88   // 32-bit float, must match sampleRate32
         static let playCount = 0x50
         static let playCount2 = 0x54
         static let lastPlayed = 0x58
@@ -95,6 +97,8 @@ enum TrackBuilder {
         mhit.setU32(at: MHIT.year, meta.year)
         mhit.setU32(at: MHIT.bitrate, meta.bitrate)
         mhit.setU32(at: MHIT.sampleRate32, meta.sampleRate << 16)
+        mhit.setU32(at: MHIT.sampleRate2, Float(meta.sampleRate).bitPattern) // must match
+        mhit.setU32(at: MHIT.soundCheck, 0) // no sound-check data of our own
         mhit.setU32(at: MHIT.playCount, 0)
         mhit.setU32(at: MHIT.playCount2, 0)
         mhit.setU32(at: MHIT.lastPlayed, 0)

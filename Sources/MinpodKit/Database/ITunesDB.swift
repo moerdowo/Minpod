@@ -241,6 +241,21 @@ public final class ITunesDB {
         }
     }
 
+    /// Fix tracks whose secondary sample-rate float (0x88) doesn't match the
+    /// primary sample rate (0x3C >> 16) — the cause of mid-song stalls on
+    /// tracks added with an older build. Returns the number repaired.
+    @discardableResult
+    public func repairSampleRates() -> Int {
+        var fixed = 0
+        for mhit in trackChunks {
+            let rate = mhit.u32(at: 0x3C) >> 16
+            guard rate > 0 else { continue }
+            let wantBits = Float(rate).bitPattern
+            if mhit.u32(at: 0x88) != wantBits { mhit.setU32(at: 0x88, wantBits); fixed += 1 }
+        }
+        return fixed
+    }
+
     /// Edit a track's string fields and/or star rating in place. Nil arguments
     /// are left unchanged. Caller should rebuildIndexes() afterwards.
     public func editTrack(id: UInt32, title: String? = nil, artist: String? = nil,

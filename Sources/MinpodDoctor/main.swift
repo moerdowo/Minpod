@@ -516,6 +516,44 @@ if args.first == "remove", args.count >= 2 {
     RunLoop.main.run()
 }
 
+// repair-samplerate: fix the secondary sample-rate float on existing tracks.
+if args.first == "repair-samplerate" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let scheme = ChecksumScheme.detect(in: db)
+        let fixed = db.repairSampleRates()
+        print("fixed sample-rate on \(fixed) track(s)")
+        guard fixed > 0 else { exit(0) }
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        try Data(bytes).write(to: dev.iTunesDBURL)
+        verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// track-fields: dump playback-relevant mhit fields for every track.
+if args.first == "track-fields" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        print("id    len(ms)  size      start  stop   vol    scheck  bitrate sr     mtype  title")
+        for m in db.trackChunks {
+            let id = m.u32(at: 16)
+            let len = m.u32(at: 0x28), size = m.u32(at: 0x24)
+            let start = m.u32(at: 0x44), stop = m.u32(at: 0x48)
+            let vol = Int32(bitPattern: m.u32(at: 0x40)), scheck = m.u32(at: 0x4C)
+            let bitrate = m.u32(at: 0x38), sr = m.u32(at: 0x3C) >> 16
+            let mtype = m.u32(at: 0xD0)
+            let sr2 = Float(bitPattern: m.u32(at: 0x88))
+            print(String(format: "%-5d len=%-7d sr(0x3C)=%-6d sr2(0x88)=%-8.0f bitrate=%-5d scheck=%-6d stop=%d mtype=%d",
+                         id, len, sr, sr2, bitrate, scheck, stop, mtype))
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 // edit <id> <title> <artist> <rating>: test the metadata/rating edit path.
 if args.first == "edit", args.count >= 5 {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }

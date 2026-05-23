@@ -114,6 +114,7 @@ public struct SyncEngine {
         }
 
         db.syncMasterPlaylists() // heal any master playlist left out of sync
+        db.repairSampleRates()   // heal any stale secondary sample-rate fields
         db.rebuildIndexes()
         var bytes = db.serialize()
         do {
