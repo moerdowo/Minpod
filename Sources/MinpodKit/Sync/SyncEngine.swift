@@ -96,6 +96,41 @@ public struct SyncEngine {
         return SyncResult(added: added, skipped: skipped)
     }
 
+    /// Remove tracks from the iPod: drop them from the database and every
+    /// playlist, rebuild indices, write atomically, then delete the audio files
+    /// that no track references any more. Returns the number removed.
+    @discardableResult
+    public func remove(trackIds: Set<UInt32>) throws -> Int {
+        guard !trackIds.isEmpty, fm.fileExists(atPath: device.iTunesDBURL.path) else { return 0 }
+        let db = try ITunesDB.read(from: device)
+        let scheme = ChecksumScheme.detect(in: db)
+        guard scheme.isSupported else { throw ChecksumError.unsupported(scheme.label) }
+
+        var removedPaths: [String] = []
+        for id in trackIds {
+            if let path = db.deleteTrack(id: id) { removedPaths.append(path) }
+        }
+        db.rebuildIndexes()
+
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: device.firewireGUID)
+        try writeDatabase(bytes)
+
+        // Delete audio files no remaining track points at.
+        let stillReferenced = Set(db.tracks.map { $0.ipodPath })
+        for path in removedPaths where !stillReferenced.contains(path) {
+            try? fm.removeItem(at: fileURL(forIPodPath: path))
+        }
+        return trackIds.count
+    }
+
+    /// Map a colon-separated iPod path (":iPod_Control:Music:F00:ABCD.mp3") to a URL.
+    func fileURL(forIPodPath path: String) -> URL {
+        var url = device.mountPoint
+        for part in path.split(separator: ":") { url.appendPathComponent(String(part)) }
+        return url
+    }
+
     // MARK: helpers
 
     /// Pick a Music/Fxx folder and a free 4-letter filename; return the file URL

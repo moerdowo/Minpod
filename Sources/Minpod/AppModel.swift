@@ -64,6 +64,28 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Remove the selected tracks from the iPod (and delete their audio files).
+    func remove(ids: Set<UInt32>) {
+        guard let dev = device, !ids.isEmpty, !isBusy else { return }
+        isBusy = true
+        status = "Removing \(ids.count) song\(ids.count == 1 ? "" : "s")…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                let n = try SyncEngine(device: dev).remove(trackIds: ids)
+                await MainActor.run {
+                    self.status = "Removed \(n) song\(n == 1 ? "" : "s") — click Eject to update the iPod"
+                    self.isBusy = false
+                    self.loadLibrary()
+                }
+            } catch {
+                await MainActor.run {
+                    self.status = "Remove failed: \(error.localizedDescription)"
+                    self.isBusy = false
+                }
+            }
+        }
+    }
+
     func eject() {
         guard let dev = device, !isBusy else { return }
         do {

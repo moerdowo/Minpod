@@ -26,6 +26,8 @@ the iPod's database format directly and **adds** songs without erasing anything.
   window and they're copied and added to the library automatically.
 - **Album art** — embedded covers are extracted, converted to the iPod's exact
   thumbnail formats, and shown on the device.
+- **Remove songs** — select one or more tracks and delete them (and their files)
+  from the iPod.
 - **Reads your library** — see everything already on the iPod in a sortable list.
 - **Safe writes** — the database is backed up before every change and written
   atomically, with the device checksum recomputed so the iPod accepts it.
@@ -86,7 +88,7 @@ reproduces what iTunes used to do:
 
 ## Limitations
 
-- Read/add only — no playlist editing or track deletion in the UI yet.
+- No playlist creation/editing yet (add, remove, and browse are supported).
 - hash72 / hashAB devices (nano 5G+, Touch, iPhone) aren't supported.
 - Don't let the Finder/Music app auto-sync the iPod, or it may replace its
   contents. Set the device to "manually manage music."

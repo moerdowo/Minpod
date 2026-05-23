@@ -5,6 +5,8 @@ struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var isDropTargeted = false
     @State private var search = ""
+    @State private var selection = Set<Track.ID>()
+    @State private var confirmRemove = false
 
     private var filteredTracks: [Track] {
         guard !search.isEmpty else { return model.tracks }
@@ -57,6 +59,14 @@ struct ContentView: View {
             }
             if model.isBusy { ProgressView().controlSize(.small) }
             if model.device != nil {
+                Button(role: .destructive) {
+                    confirmRemove = true
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+                .help("Remove the selected song(s) from the iPod")
+                .disabled(model.isBusy || selection.isEmpty)
+
                 Button {
                     model.eject()
                 } label: {
@@ -89,13 +99,35 @@ struct ContentView: View {
     }
 
     private var trackList: some View {
-        Table(filteredTracks) {
+        Table(filteredTracks, selection: $selection) {
             TableColumn("Title", value: \.title)
             TableColumn("Artist", value: \.artist)
             TableColumn("Album", value: \.album)
             TableColumn("Time") { Text($0.durationText).monospacedDigit() }
                 .width(56)
         }
+        .contextMenu(forSelectionType: Track.ID.self) { ids in
+            if !ids.isEmpty {
+                Button("Remove \(ids.count) Song\(ids.count == 1 ? "" : "s") from iPod", role: .destructive) {
+                    selection = ids
+                    confirmRemove = true
+                }
+            }
+        }
+        .onDeleteCommand { if !selection.isEmpty { confirmRemove = true } }
+        .confirmationDialog(removePrompt, isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove", role: .destructive) {
+                model.remove(ids: selection)
+                selection = []
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The song\(selection.count == 1 ? "" : "s") and \(selection.count == 1 ? "its" : "their") file\(selection.count == 1 ? "" : "s") will be deleted from the iPod.")
+        }
+    }
+
+    private var removePrompt: String {
+        "Remove \(selection.count) song\(selection.count == 1 ? "" : "s")?"
     }
 
     private var dropOverlay: some View {

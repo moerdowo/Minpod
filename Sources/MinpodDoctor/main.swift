@@ -499,6 +499,23 @@ if args.first == "art-audit" {
 
 // art-repair: fix every track's mhii_link to point at the image matching its
 // dbid, then re-checksum and write the iTunesDB.
+// remove <id...>: remove tracks via the SyncEngine (deletes audio files too).
+if args.first == "remove", args.count >= 2 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let ids = Set(args.dropFirst().compactMap { UInt32($0) })
+    Task {
+        defer { exit(0) }
+        do {
+            let before = try ITunesDB.read(from: dev).tracks.count
+            let n = try SyncEngine(device: dev).remove(trackIds: ids)
+            let db = try ITunesDB.read(from: dev)
+            print("removed \(n); tracks \(before) -> \(db.tracks.count)")
+            verifyHash58(db, guid: dev.firewireGUID ?? "")
+        } catch { print("ERROR: \(error)") }
+    }
+    RunLoop.main.run()
+}
+
 if args.first == "art-repair" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     do {
