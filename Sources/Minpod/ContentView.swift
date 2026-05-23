@@ -128,8 +128,11 @@ struct ContentView: View {
         .contextMenu(forSelectionType: Track.ID.self) { ids in
             if ids.count == 1, let t = model.tracks.first(where: { $0.id == ids.first }) {
                 Button("Edit…") { editingTrack = t }
+                Button("Set Artwork…") { model.chooseAndSetArtwork(id: t.id) }
             }
             if !ids.isEmpty {
+                Button("Export to…") { model.exportSelected(ids: ids) }
+                Divider()
                 Button("Remove \(ids.count) Song\(ids.count == 1 ? "" : "s") from iPod", role: .destructive) {
                     selection = ids
                     confirmRemove = true

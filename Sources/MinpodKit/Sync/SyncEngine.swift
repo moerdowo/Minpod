@@ -9,6 +9,8 @@ public enum SyncError: Error, CustomStringConvertible {
     case noTrackTemplate
     case noMasterPlaylist
     case databaseMissing
+    case trackNotFound
+    case artworkFailed
 
     public var description: String {
         switch self {
@@ -18,6 +20,10 @@ public enum SyncError: Error, CustomStringConvertible {
             return "Could not find the iPod's master playlist in the database."
         case .databaseMissing:
             return "No iTunesDB found on the iPod."
+        case .trackNotFound:
+            return "Track not found on the iPod."
+        case .artworkFailed:
+            return "Couldn't read or convert the image."
         }
     }
 }
@@ -173,6 +179,56 @@ public struct SyncEngine {
 
     static func dupKey(_ title: String, _ artist: String) -> String {
         (title.lowercased() + "\u{1}" + artist.lowercased())
+    }
+
+    /// Set (or replace) a track's cover art from raw image data.
+    public func setArtwork(trackId: UInt32, imageData: Data) throws {
+        let db = try ITunesDB.read(from: device)
+        let scheme = ChecksumScheme.detect(in: db)
+        guard scheme.isSupported else { throw ChecksumError.unsupported(scheme.label) }
+        guard let mhit = db.trackChunks.first(where: { $0.u32(at: 16) == trackId }) else { throw SyncError.trackNotFound }
+
+        let dbid = mhit.u64(at: 0x70)
+        let idMap = try ArtworkWriter(device: device).addImages([(dbid, imageData)])
+        guard let imageId = idMap[dbid] else { throw SyncError.artworkFailed }
+
+        mhit.setU16(at: 0x7C, 1)            // artwork_count
+        mhit.setU16(at: 0x7E, 0xFFFF)
+        mhit.setU32(at: 0x80, UInt32(imageData.count))
+        mhit.setU8(at: 0xA4, 1)             // has_artwork
+        mhit.setU32(at: 0x160, imageId)     // mhii_link
+
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: device.firewireGUID)
+        try writeDatabase(bytes)
+    }
+
+    /// Copy selected tracks off the iPod into `dir`, named "Artist - Title.ext".
+    @discardableResult
+    public func export(trackIds: Set<UInt32>, to dir: URL) throws -> Int {
+        let db = try ITunesDB.read(from: device)
+        var n = 0
+        for t in db.tracks where trackIds.contains(t.id) {
+            let srcURL = fileURL(forIPodPath: t.ipodPath)
+            guard fm.fileExists(atPath: srcURL.path) else { continue }
+            let ext = srcURL.pathExtension
+            let base = Self.sanitizeFilename(t.artist.isEmpty ? t.title : "\(t.artist) - \(t.title)")
+            var destURL = dir.appendingPathComponent(base).appendingPathExtension(ext)
+            var i = 1
+            while fm.fileExists(atPath: destURL.path) {
+                destURL = dir.appendingPathComponent("\(base) (\(i))").appendingPathExtension(ext)
+                i += 1
+            }
+            try fm.copyItem(at: srcURL, to: destURL)
+            n += 1
+        }
+        return n
+    }
+
+    static func sanitizeFilename(_ s: String) -> String {
+        let cleaned = s.components(separatedBy: CharacterSet(charactersIn: "/:\\?%*|\"<>")).joined(separator: "_")
+        let trimmed = cleaned.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? "Untitled" : String(trimmed.prefix(180))
     }
 
     /// Edit a track's metadata / rating and write the database.

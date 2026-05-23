@@ -535,6 +535,29 @@ if args.first == "edit", args.count >= 5 {
     RunLoop.main.run()
 }
 
+// set-art <id> <imagefile> | export <id> <dir>: test artwork-set and export.
+if args.first == "set-art", args.count >= 3 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let id = UInt32(args[1]) ?? 0
+    do {
+        let data = try Data(contentsOf: URL(fileURLWithPath: args[2]))
+        try SyncEngine(device: dev).setArtwork(trackId: id, imageData: data)
+        print("set artwork on \(id) from \(args[2]) (\(data.count) bytes)")
+        let db = try ITunesDB.read(from: dev)
+        verifyHash58(db, guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+if args.first == "export", args.count >= 3 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let ids = Set([UInt32(args[1]) ?? 0])
+    do {
+        let n = try SyncEngine(device: dev).export(trackIds: ids, to: URL(fileURLWithPath: args[2]))
+        print("exported \(n) file(s) to \(args[2])")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "art-repair" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     do {

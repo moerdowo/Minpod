@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import MinpodKit
 
 @MainActor
@@ -131,6 +133,49 @@ final class AppModel: ObservableObject {
                     self.status = "Edit failed: \(error.localizedDescription)"
                     self.isBusy = false
                 }
+            }
+        }
+    }
+
+    /// Pick an image and set it as the selected track's cover.
+    func chooseAndSetArtwork(id: UInt32) {
+        guard let dev = device, !isBusy else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a cover image"
+        guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else { return }
+        isBusy = true
+        status = "Setting artwork…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                try SyncEngine(device: dev).setArtwork(trackId: id, imageData: data)
+                await MainActor.run { self.status = "Artwork set — click Eject to update the iPod"; self.isBusy = false; self.loadLibrary() }
+            } catch {
+                await MainActor.run { self.status = "Set artwork failed: \(error.localizedDescription)"; self.isBusy = false }
+            }
+        }
+    }
+
+    /// Pick a folder and export the selected tracks to it.
+    func exportSelected(ids: Set<UInt32>) {
+        guard let dev = device, !isBusy, !ids.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Export Here"
+        panel.message = "Choose where to export \(ids.count) song\(ids.count == 1 ? "" : "s")"
+        guard panel.runModal() == .OK, let dir = panel.url else { return }
+        isBusy = true
+        status = "Exporting…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                let n = try SyncEngine(device: dev).export(trackIds: ids, to: dir)
+                await MainActor.run { self.status = "Exported \(n) song\(n == 1 ? "" : "s") to \(dir.lastPathComponent)"; self.isBusy = false }
+            } catch {
+                await MainActor.run { self.status = "Export failed: \(error.localizedDescription)"; self.isBusy = false }
             }
         }
     }
