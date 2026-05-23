@@ -4,15 +4,22 @@
 
 # Minpod
 
-**Drag-and-drop music onto your click-wheel iPod — no iTunes required.**
-
-A native macOS app that writes directly to the iPod's `iTunesDB`, so you can
-add songs (with album art) to an iPod Video, Classic, or Nano just by dropping
-files onto a window.
+**A modern macOS music manager for your click-wheel iPod — no iTunes required.**
 
 </div>
 
 ---
+
+## About
+
+Minpod brings your old iPod back to life on modern macOS. It talks to the iPod's
+proprietary `iTunesDB` format directly — so you can drag songs onto a window to
+add them (with album art), manage playlists, edit metadata, and remove or export
+tracks, all without iTunes. Crucially, it **adds** to your library instead of
+wiping it, and recomputes the device checksum so the iPod accepts every change.
+
+It supports the iPod Video (5G/5.5G), iPod Classic (all generations), and iPod
+nano (1G–4G).
 
 ## Why
 
@@ -53,9 +60,9 @@ Grab `Minpod.dmg` from the [latest release](https://github.com/moerdowo/Minpod/r
 open it, and drag **Minpod** into **Applications**.
 
 > [!IMPORTANT]
-> Minpod is **not notarized** (no paid Apple Developer account), so Gatekeeper
-> blocks it on first launch with *"Minpod is damaged / cannot be opened because
-> Apple cannot check it for malicious software."* This is expected. To allow it:
+> Minpod is **not notarized**, so Gatekeeper blocks it on first launch with
+> *"Minpod is damaged / cannot be opened because Apple cannot check it for
+> malicious software."* This is expected. To allow it:
 
 **Easiest — Terminal (run once):**
 
