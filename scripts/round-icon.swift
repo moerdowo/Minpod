@@ -18,7 +18,7 @@ guard let src = CGImageSourceCreateWithURL(srcURL as CFURL, nil),
 }
 
 let radiusFraction: CGFloat = 0.18 // border radius as a fraction of the side
-let cropInset: CGFloat = 0.085     // crop this fraction off each edge (drops the blueprint frame/margin)
+let cropInset: CGFloat = 0.0       // crop this fraction off each edge (0 = none; image is already tightly framed)
 
 // Crop the source inward so the outer frame and margin are removed.
 let image: CGImage = {
