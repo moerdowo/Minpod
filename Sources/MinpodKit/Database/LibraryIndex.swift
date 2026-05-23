@@ -46,17 +46,19 @@ enum LibraryIndex {
     }
 
     static func rebuild(_ db: ITunesDB) {
-        guard let mhlt = db.trackListHeader, let mpl = db.masterPlaylist else { return }
+        guard let mhlt = db.trackListHeader else { return }
         let mhits = mhlt.children.filter { $0.magic == "mhit" }
         let tracks = mhits.enumerated().map { IndexTrack(index: $0.offset, mhit: $0.element) }
 
-        for mhod in mpl.children where mhod.magic == "mhod" {
-            let mhodType = mhod.u32(at: 12)
-            let sortRaw = le32(mhod.trailing, 0)
-            if mhodType == 52 {
-                mhod.trailing = makeIndexBody(sortRaw: sortRaw, ordered: sorted(tracks, by: sortRaw))
-            } else if mhodType == 53 {
-                mhod.trailing = makeJumpTableBody(sortRaw: sortRaw, ordered: sorted(tracks, by: sortRaw))
+        for mpl in db.masterPlaylists {
+            for mhod in mpl.children where mhod.magic == "mhod" {
+                let mhodType = mhod.u32(at: 12)
+                let sortRaw = le32(mhod.trailing, 0)
+                if mhodType == 52 {
+                    mhod.trailing = makeIndexBody(sortRaw: sortRaw, ordered: sorted(tracks, by: sortRaw))
+                } else if mhodType == 53 {
+                    mhod.trailing = makeJumpTableBody(sortRaw: sortRaw, ordered: sorted(tracks, by: sortRaw))
+                }
             }
         }
     }

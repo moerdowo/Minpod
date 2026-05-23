@@ -178,6 +178,55 @@ if args.first == "playlists" {
 }
 
 // mpl-mhods: dump the master playlist's mhod children (types + sizes).
+// masters: across ALL datasets, find every mhyp that carries type-52 sort
+// indices (i.e. a library/master playlist) and report its mhip count + index
+// counts — to detect master playlists we failed to update.
+if args.first == "masters" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    func le(_ a: [UInt8], _ o: Int) -> UInt32 { (o+4<=a.count) ? UInt32(a[o]) | (UInt32(a[o+1])<<8) | (UInt32(a[o+2])<<16) | (UInt32(a[o+3])<<24) : 0 }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        print("track-list count: \(db.trackChunks.count)")
+        for ds in db.root.children where ds.magic == "mhsd" {
+            let dsType = ds.u32(at: 12)
+            guard let lh = ds.children.first else { continue }
+            for (i, pl) in lh.children.enumerated() where pl.magic == "mhyp" {
+                let mhips = pl.children.filter { $0.magic == "mhip" }.count
+                let t52 = pl.children.filter { $0.magic == "mhod" && $0.u32(at: 12) == 52 }
+                guard !t52.isEmpty else { continue } // only library/master playlists
+                let idxCounts = t52.map { Int(le($0.trailing, 4)) }
+                print("mhsd type=\(dsType) playlist#\(i): mhips=\(mhips) type52 indices=\(t52.count) counts=\(Set(idxCounts))")
+            }
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// mhsd-dump: show every dataset, its list header, item count, and child magics.
+if args.first == "mhsd-dump" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        print("track-list mhit count: \(db.trackChunks.count)")
+        for ds in db.root.children where ds.magic == "mhsd" {
+            let type = ds.u32(at: 12)
+            let listHeader = ds.children.first
+            let lh = listHeader?.magic ?? "?"
+            let items = listHeader?.children.count ?? 0
+            print("mhsd type=\(type): listHeader=\(lh) items=\(items)")
+            // tally child magics of the list header
+            var tally: [String: Int] = [:]
+            for c in listHeader?.children ?? [] { tally[c.magic, default: 0] += 1 }
+            print("    child magics: \(tally)")
+            // for album-ish items, show how many reference a track id we recognize
+            if let first = listHeader?.children.first {
+                print("    first item magic=\(first.magic) headerLen=\(first.headerLen) mhods=\(first.children.count) totalLen=\(first.byteLength)")
+            }
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "mpl-mhods" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     do {
@@ -267,6 +316,73 @@ if args.first == "diff-mhit", args.count >= 3 {
 
 // repair-dbid: fix tracks whose secondary persistent-id copy (0xA8) doesn't
 // match the primary (0x70) — the cause of cloned tracks being deduped away.
+// rename <trackid> <newtitle>: change an EXISTING track's title. Diagnostic to
+// confirm whether the iPod re-reads our modified iTunesDB at all.
+if args.first == "rename", args.count >= 3 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let id = UInt32(args[1]) ?? 0
+    let newTitle = args[2]
+    do {
+        let db = try ITunesDB.read(from: dev)
+        guard let mhit = db.trackChunks.first(where: { $0.u32(at: 16) == id }) else { print("track \(id) not found"); exit(1) }
+        guard let titleMhod = mhit.children.first(where: { $0.magic == "mhod" && $0.u32(at: 12) == 1 }) else { print("no title mhod"); exit(1) }
+        let utf16 = Array(newTitle.utf16).flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] }
+        var body: [UInt8] = []
+        func u32(_ v: UInt32) { for i in 0..<4 { body.append(UInt8((v >> (8*UInt32(i))) & 0xff)) } }
+        u32(1); u32(UInt32(utf16.count)); u32(1); u32(0); body.append(contentsOf: utf16)
+        titleMhod.trailing = body
+        db.rebuildIndexes()
+        let scheme = ChecksumScheme.detect(in: db)
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        try Data(bytes).write(to: dev.iTunesDBURL)
+        print("renamed track \(id) -> \"\(newTitle)\", wrote \(bytes.count) bytes")
+        verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// dup-track <srcid> <newtitle>: append an EXACT clone of an existing track
+// (same file/size/length/fields), changing only id, dbid and title. Isolates
+// whether appended entries display at all vs. a field we set on real adds.
+if args.first == "dup-track", args.count >= 3 {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    let srcId = UInt32(args[1]) ?? 0
+    let newTitle = args[2]
+    do {
+        let db = try ITunesDB.read(from: dev)
+        guard let mhlt = db.trackListHeader, let src = db.trackChunks.first(where: { $0.u32(at: 16) == srcId }) else { print("src not found"); exit(1) }
+        guard let mpl = db.masterPlaylist, let tmplIp = mpl.children.first(where: { $0.magic == "mhip" }) else { print("no MPL"); exit(1) }
+        let dup = src.deepCopy()
+        let newId = db.nextTrackId
+        let srcDbid = src.u64(at: 0x70)
+        let newDbid = UInt64.random(in: 1...UInt64.max)
+        var off = 0
+        while off + 8 <= dup.header.count { if dup.u64(at: off) == srcDbid { dup.setU64(at: off, newDbid) }; off += 4 }
+        dup.setU32(at: 0x10, newId)
+        if let tm = dup.children.first(where: { $0.magic == "mhod" && $0.u32(at: 12) == 1 }) {
+            let utf16 = Array(newTitle.utf16).flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] }
+            var body: [UInt8] = []
+            func u32(_ v: UInt32) { for i in 0..<4 { body.append(UInt8((v >> (8*UInt32(i))) & 0xff)) } }
+            u32(1); u32(UInt32(utf16.count)); u32(1); u32(0); body.append(contentsOf: utf16)
+            tm.trailing = body
+        }
+        mhlt.children.append(dup)
+        let ip = tmplIp.deepCopy()
+        ip.setU32(at: 0x18, newId)
+        mpl.children.append(ip)
+        mpl.setU32(at: 0x10, UInt32(mpl.children.filter { $0.magic == "mhip" }.count))
+        db.rebuildIndexes()
+        let scheme = ChecksumScheme.detect(in: db)
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        try Data(bytes).write(to: dev.iTunesDBURL)
+        print("duplicated track \(srcId) as id \(newId) titled \"\(newTitle)\", wrote \(bytes.count) bytes")
+        verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 if args.first == "repair-dbid" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
     do {
@@ -288,6 +404,31 @@ if args.first == "repair-dbid" {
         print("wrote \(bytes.count) bytes")
         let after = try ITunesDB.read(from: dev)
         verifyHash58(after, guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// sync-masters: add missing tracks to every master playlist, rebuild all
+// indices, re-checksum and write. Repairs tracks added to only one master.
+if args.first == "sync-masters" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    func le(_ a: [UInt8], _ o: Int) -> UInt32 { (o+4<=a.count) ? UInt32(a[o]) | (UInt32(a[o+1])<<8) | (UInt32(a[o+2])<<16) | (UInt32(a[o+3])<<24) : 0 }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let scheme = ChecksumScheme.detect(in: db)
+        let added = db.syncMasterPlaylists()
+        db.rebuildIndexes()
+        print("tracks=\(db.trackChunks.count) scheme=\(scheme.label) mhips added=\(added)")
+        for mpl in db.masterPlaylists {
+            let mhips = mpl.children.filter { $0.magic == "mhip" }.count
+            let counts = Set(mpl.children.filter { $0.magic == "mhod" && $0.u32(at: 12) == 52 }.map { Int(le($0.trailing, 4)) })
+            print("  master playlist: mhips=\(mhips) index counts=\(counts)")
+        }
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        try Data(bytes).write(to: dev.iTunesDBURL)
+        print("wrote \(bytes.count) bytes")
+        verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
     } catch { print("ERROR: \(error)") }
     exit(0)
 }

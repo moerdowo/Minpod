@@ -40,32 +40,71 @@ public final class ITunesDB {
         trackChunks.map(Track.from(mhit:))
     }
 
-    /// The master playlist (first mhyp in the type-2 dataset).
-    public var masterPlaylist: Chunk? {
-        dataset(type: 2)?.firstChild("mhlp")?.children.first { $0.magic == "mhyp" }
+    /// The first master/library playlist (kept for diagnostics).
+    public var masterPlaylist: Chunk? { masterPlaylists.first }
+
+    /// Every library/master playlist in the database — identified by carrying
+    /// the type-52 sort indices. This iPod keeps one in BOTH the type-2 and
+    /// type-3 datasets; the browse menus read one of them, so a track must be
+    /// added to all of them or it stays invisible.
+    public var masterPlaylists: [Chunk] {
+        var result: [Chunk] = []
+        for ds in root.children where ds.magic == "mhsd" {
+            guard let listHeader = ds.children.first else { continue }
+            for pl in listHeader.children where pl.magic == "mhyp" {
+                if pl.children.contains(where: { $0.magic == "mhod" && $0.u32(at: 12) == 52 }) {
+                    result.append(pl)
+                }
+            }
+        }
+        return result
     }
 
     public var nextTrackId: UInt32 {
         (trackChunks.map { $0.u32(at: 16) }.max() ?? 0) + 1
     }
 
-    /// Insert a track into the track list and the master playlist, templating
+    /// Insert a track into the track list and every master playlist, templating
     /// from existing entries. Mutates the tree in place.
     public func insertTrack(id: UInt32, dbid: UInt64, meta: AudioMetadata, ipodPath: String) throws {
         guard let mhlt = trackListHeader,
               let templateTrack = mhlt.children.first(where: { $0.magic == "mhit" }) else {
             throw SyncError.noTrackTemplate
         }
-        guard let mpl = masterPlaylist,
-              let templateItem = mpl.children.first(where: { $0.magic == "mhip" }) else {
-            throw SyncError.noMasterPlaylist
-        }
+        let masters = masterPlaylists
+        guard !masters.isEmpty else { throw SyncError.noMasterPlaylist }
+
         let mhit = TrackBuilder.makeTrack(template: templateTrack, id: id, dbid: dbid,
                                           meta: meta, ipodPath: ipodPath)
         mhlt.children.append(mhit)
-        let mhip = TrackBuilder.makePlaylistItem(template: templateItem, trackId: id)
-        mpl.children.append(mhip)
-        mpl.setU32(at: 0x10, UInt32(mpl.children.filter { $0.magic == "mhip" }.count))
+
+        for mpl in masters {
+            guard let templateItem = mpl.children.first(where: { $0.magic == "mhip" }) else { continue }
+            let mhip = TrackBuilder.makePlaylistItem(template: templateItem, trackId: id)
+            mpl.children.append(mhip)
+            mpl.setU32(at: 0x10, UInt32(mpl.children.filter { $0.magic == "mhip" }.count))
+        }
+    }
+
+    /// Ensure every master playlist contains an mhip for every track in the
+    /// track list (repairs playlists that were left out of sync). Returns the
+    /// number of mhips added.
+    @discardableResult
+    public func syncMasterPlaylists() -> Int {
+        let allIds = trackChunks.map { $0.u32(at: 16) }
+        var added = 0
+        for mpl in masterPlaylists {
+            guard let templateItem = mpl.children.first(where: { $0.magic == "mhip" }) else { continue }
+            var present = Set(mpl.children.filter { $0.magic == "mhip" }.map { $0.u32(at: 0x18) })
+            for id in allIds where !present.contains(id) {
+                let mhip = TrackBuilder.makePlaylistItem(template: templateItem, trackId: id)
+                mpl.children.append(mhip)
+                present.insert(id)
+                added += 1
+            }
+            mpl.setU32(at: 0x10, UInt32(mpl.children.filter { $0.magic == "mhip" }.count))
+        }
+        return added
     }
 
     /// Regenerate the master playlist's sort/browse indices (mhod 52/53) so the
