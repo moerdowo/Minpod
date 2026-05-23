@@ -13,11 +13,21 @@ let srcURL = URL(fileURLWithPath: args[1])
 let root = URL(fileURLWithPath: args[2])
 
 guard let src = CGImageSourceCreateWithURL(srcURL as CFURL, nil),
-      let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+      let loaded = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
     FileHandle.standardError.write(Data("cannot read image: \(srcURL.path)\n".utf8)); exit(1)
 }
 
 let radiusFraction: CGFloat = 0.18 // border radius as a fraction of the side
+let cropInset: CGFloat = 0.085     // crop this fraction off each edge (drops the blueprint frame/margin)
+
+// Crop the source inward so the outer frame and margin are removed.
+let image: CGImage = {
+    let w = CGFloat(loaded.width), h = CGFloat(loaded.height)
+    let rect = CGRect(x: (w * cropInset).rounded(), y: (h * cropInset).rounded(),
+                      width: (w * (1 - 2 * cropInset)).rounded(),
+                      height: (h * (1 - 2 * cropInset)).rounded())
+    return loaded.cropping(to: rect) ?? loaded
+}()
 
 func rounded(_ size: Int) -> CGImage? {
     let cs = CGColorSpaceCreateDeviceRGB()
