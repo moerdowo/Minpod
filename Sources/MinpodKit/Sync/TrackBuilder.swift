@@ -28,6 +28,8 @@ enum TrackBuilder {
         static let songId = 0x70        // 8-byte persistent dbid
         static let artworkCount = 0x7C  // i16
         static let artworkSize = 0x80
+        static let hasArtwork = 0xA4    // 1 byte: 1 = has artwork
+        static let mhiiLink = 0x160     // 4 bytes: references the ArtworkDB mhii image_id
     }
     enum MHIP {
         static let trackId = 0x18
@@ -102,9 +104,13 @@ enum TrackBuilder {
             mhit.setU16(at: MHIT.artworkCount, 1)      // 1 artwork
             mhit.setU16(at: 0x7E, 0xFFFF)              // matches iTunes "has art"
             mhit.setU32(at: MHIT.artworkSize, artSize) // original cover byte size
+            mhit.setU8(at: MHIT.hasArtwork, 1)
+            // mhii_link is set after the ArtworkDB assigns the image_id.
         } else {
             mhit.setU16(at: MHIT.artworkCount, 0)
             mhit.setU32(at: MHIT.artworkSize, 0)
+            mhit.setU8(at: MHIT.hasArtwork, 0)
+            mhit.setU32(at: MHIT.mhiiLink, 0)
         }
         // Replace every copy of the template's dbid (e.g. at 0x70 and 0xA8) with
         // the new unique id. A 64-bit id won't collide coincidentally elsewhere.

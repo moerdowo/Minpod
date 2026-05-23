@@ -53,6 +53,11 @@ public final class Chunk {
         for i in 0..<4 { header[offset + i] = UInt8((value >> (8 * i)) & 0xff) }
     }
 
+    public func setU8(at offset: Int, _ value: UInt8) {
+        guard offset < header.count else { return }
+        header[offset] = value
+    }
+
     public func setU16(at offset: Int, _ value: UInt16) {
         guard offset + 2 <= header.count else { return }
         header[offset] = UInt8(value & 0xff)

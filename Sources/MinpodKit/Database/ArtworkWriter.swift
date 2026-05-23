@@ -35,28 +35,29 @@ public struct ArtworkWriter {
         static let mhniWidth = 0x22
     }
 
-    /// Add cover art for each (track dbid, encoded image bytes). Returns the
-    /// dbids that successfully got art.
+    /// Add cover art for each (track dbid, encoded image bytes). Returns a map
+    /// of dbid -> the ArtworkDB image_id assigned, which the caller must store
+    /// in the track's mhii_link field so the iPod resolves the cover.
     @discardableResult
-    public func addImages(_ rawItems: [(dbid: UInt64, imageData: Data)]) throws -> [UInt64] {
-        guard isAvailable, !rawItems.isEmpty else { return [] }
+    public func addImages(_ rawItems: [(dbid: UInt64, imageData: Data)]) throws -> [UInt64: UInt32] {
+        guard isAvailable, !rawItems.isEmpty else { return [:] }
         let items: [(dbid: UInt64, image: CGImage, origSize: Int)] = rawItems.compactMap {
             guard let img = Artwork.decode($0.imageData) else { return nil }
             return ($0.dbid, img, $0.imageData.count)
         }
-        guard !items.isEmpty else { return [] }
+        guard !items.isEmpty else { return [:] }
         let root = try ChunkParser([UInt8](Data(contentsOf: artworkDBURL))).parse()
 
         guard let imageList = root.children
                 .first(where: { $0.magic == "mhsd" && $0.u16(at: 0x0C) == 1 })?
                 .children.first(where: { $0.magic == "mhli" }),
               let template = imageList.children.first(where: { $0.magic == "mhii" }) else {
-            return [] // no existing image to template from
+            return [:] // no existing image to template from
         }
 
         // Read the thumbnail formats from the template's mhni entries.
         let formats = thumbnailFormats(of: template)
-        guard !formats.isEmpty else { return [] }
+        guard !formats.isEmpty else { return [:] }
 
         // Track append offset per .ithmb file (start at current file size).
         var offsets: [UInt32: UInt32] = [:]
@@ -72,11 +73,12 @@ public struct ArtworkWriter {
         }
 
         var nextId = root.u32(at: O.mhfdNextId)
-        var done: [UInt64] = []
+        var done: [UInt64: UInt32] = [:]
 
         for item in items {
+            let imageId = nextId
             let mhii = template.deepCopy()
-            mhii.setU32(at: O.mhiiImageId, nextId)
+            mhii.setU32(at: O.mhiiImageId, imageId)
             mhii.setU64(at: O.mhiiSongId, item.dbid)
             mhii.setU32(at: O.mhiiOrigImgSize, UInt32(item.origSize))
 
@@ -95,8 +97,8 @@ public struct ArtworkWriter {
             }
 
             imageList.children.append(mhii)
+            done[item.dbid] = imageId
             nextId += 1
-            done.append(item.dbid)
         }
 
         root.setU32(at: O.mhfdNextId, nextId)

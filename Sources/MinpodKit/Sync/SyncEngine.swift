@@ -73,8 +73,15 @@ public struct SyncEngine {
 
         // Write album art (best-effort: failure shouldn't block the music sync).
         if !artItems.isEmpty {
-            do { try ArtworkWriter(device: device).addImages(artItems) }
-            catch { skipped.append(("album art", error.localizedDescription)) }
+            do {
+                let idMap = try ArtworkWriter(device: device).addImages(artItems)
+                // Link each track to its ArtworkDB image via mhii_link (0x160).
+                for mhit in db.trackChunks {
+                    if let imageId = idMap[mhit.u64(at: 0x70)] {
+                        mhit.setU32(at: 0x160, imageId)
+                    }
+                }
+            } catch { skipped.append(("album art", error.localizedDescription)) }
         }
 
         db.syncMasterPlaylists() // heal any master playlist left out of sync

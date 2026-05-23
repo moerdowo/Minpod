@@ -505,6 +505,7 @@ if args.first == "art-test" {
         var off = 0; while off+8 <= dup.header.count { if dup.u64(at: off) == srcDbid { dup.setU64(at: off, newDbid) }; off += 4 }
         dup.setU32(at: 0x10, newId)
         dup.setU16(at: 0x7C, 1); dup.setU16(at: 0x7E, 0xFFFF); dup.setU32(at: 0x80, UInt32(png.count))
+        dup.setU8(at: 0xA4, 1) // has_artwork
         if let tm = dup.children.first(where: { $0.magic == "mhod" && $0.u32(at: 12) == 1 }) {
             let u = Array("AAA ART TEST".utf16).flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] }
             var b: [UInt8] = []; func p(_ v: UInt32){ for i in 0..<4 { b.append(UInt8((v>>(8*UInt32(i)))&0xff)) } }
@@ -517,11 +518,12 @@ if args.first == "art-test" {
             mpl.children.append(ip); mpl.setU32(at: 0x10, UInt32(mpl.children.filter { $0.magic == "mhip" }.count))
         }
         let got = try ArtworkWriter(device: dev).addImages([(newDbid, png)])
+        if let imageId = got[newDbid] { dup.setU32(at: 0x160, imageId) } // mhii_link
         db.rebuildIndexes()
         let scheme = ChecksumScheme.detect(in: db)
         var bytes = db.serialize(); try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
         try Data(bytes).write(to: dev.iTunesDBURL)
-        print("added 'AAA ART TEST' id=\(newId) dbid=\(String(newDbid,radix:16)) png=\(png.count)B artLinked=\(got.count)")
+        print("added 'AAA ART TEST' id=\(newId) dbid=\(String(newDbid,radix:16)) png=\(png.count)B mhiiLink=\(got[newDbid] ?? 0)")
         // validate ArtworkDB
         let aw = try ChunkParser([UInt8](Data(contentsOf: dev.controlDir.appendingPathComponent("Artwork/ArtworkDB")))).parse()
         let images = aw.children.first { $0.magic == "mhsd" && $0.u16(at:0x0C)==1 }?.children.first?.children.filter { $0.magic == "mhii" }.count ?? -1
