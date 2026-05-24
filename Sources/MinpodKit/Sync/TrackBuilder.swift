@@ -22,6 +22,12 @@ enum TrackBuilder {
         static let sampleRate32 = 0x3C  // stored as rate << 16
         static let soundCheck = 0x4C
         static let sampleRate2 = 0x88   // 32-bit float, must match sampleRate32
+        static let pregap = 0xB8        // 0x184 in libgpod terms (seek+184)
+        static let sampleCount = 0xBC   // 64-bit: total audio samples the iPod plays
+        static let postgap = 0xC8       // seek+200
+        static let gaplessData = 0xF8   // seek+248
+        static let gaplessTrackFlag = 0x100
+        static let gaplessAlbumFlag = 0x102
         static let playCount = 0x50
         static let playCount2 = 0x54
         static let lastPlayed = 0x58
@@ -99,6 +105,15 @@ enum TrackBuilder {
         mhit.setU32(at: MHIT.sampleRate32, meta.sampleRate << 16)
         mhit.setU32(at: MHIT.sampleRate2, Float(meta.sampleRate).bitPattern) // must match
         mhit.setU32(at: MHIT.soundCheck, 0) // no sound-check data of our own
+        // Total samples the iPod plays — cloning the template's value made songs
+        // stop near the end; compute it and disable gapless trimming.
+        let samples = UInt64((Double(meta.durationMS) / 1000.0) * Double(meta.sampleRate))
+        mhit.setU64(at: MHIT.sampleCount, samples)
+        mhit.setU32(at: MHIT.pregap, 0)
+        mhit.setU32(at: MHIT.postgap, 0)
+        mhit.setU32(at: MHIT.gaplessData, 0)
+        mhit.setU16(at: MHIT.gaplessTrackFlag, 0)
+        mhit.setU16(at: MHIT.gaplessAlbumFlag, 0)
         mhit.setU32(at: MHIT.playCount, 0)
         mhit.setU32(at: MHIT.playCount2, 0)
         mhit.setU32(at: MHIT.lastPlayed, 0)

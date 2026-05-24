@@ -549,6 +549,42 @@ if args.first == "reencode-441" {
     exit(0)
 }
 
+// repair-samplecount: fix stale sample counts + clear gapless trims, then write.
+if args.first == "repair-samplecount" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        let scheme = ChecksumScheme.detect(in: db)
+        let fixed = db.repairSampleCounts()
+        print("fixed sample count on \(fixed) track(s)")
+        guard fixed > 0 else { exit(0) }
+        var bytes = db.serialize()
+        try scheme.apply(to: &bytes, firewireGUID: dev.firewireGUID)
+        try Data(bytes).write(to: dev.iTunesDBURL)
+        verifyHash58(try ITunesDB.read(from: dev), guid: dev.firewireGUID ?? "")
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
+// gapless-fields: dump samplecount/pregap/postgap vs the expected sample count.
+if args.first == "gapless-fields" {
+    guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }
+    do {
+        let db = try ITunesDB.read(from: dev)
+        print("id    len(ms)  rate   samplecount  expected     pregap postgap gapless gflag")
+        for m in db.trackChunks {
+            let len = m.u32(at: 0x28), rate = m.u32(at: 0x3C) >> 16
+            let sc = m.u64(at: 188), pre = m.u32(at: 184), post = m.u32(at: 200)
+            let gd = m.u32(at: 248), gf = m.u16(at: 256)
+            let expected = UInt64((Double(len) / 1000.0) * Double(rate))
+            let flag = (sc > 0 && abs(Int64(sc) - Int64(expected)) > 50000) ? " <-- OFF" : ""
+            print(String(format: "%-5d %-8d %-6d %-12llu %-12llu %-6d %-7d %-7d %-5d%@",
+                         m.u32(at: 16), len, rate, sc, expected, pre, post, gd, gf, flag))
+        }
+    } catch { print("ERROR: \(error)") }
+    exit(0)
+}
+
 // check-durations: compare each track's stored length to the actual file duration.
 if args.first == "check-durations" {
     guard let dev = IPodDetector().currentDevices().first else { print("No iPod connected."); exit(1) }

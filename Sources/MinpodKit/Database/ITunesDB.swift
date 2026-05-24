@@ -256,6 +256,33 @@ public final class ITunesDB {
         return fixed
     }
 
+    /// Fix tracks whose sample count (0xBC) doesn't match their duration — the
+    /// cause of songs stopping near the end — and clear gapless trim fields.
+    /// Returns the number repaired.
+    @discardableResult
+    public func repairSampleCounts() -> Int {
+        var fixed = 0
+        for mhit in trackChunks {
+            let lenMS = mhit.u32(at: 0x28)
+            let rate = mhit.u32(at: 0x3C) >> 16
+            guard lenMS > 0, rate > 0 else { continue }
+            let expected = UInt64((Double(lenMS) / 1000.0) * Double(rate))
+            let current = mhit.u64(at: 0xBC)
+            // Tolerate small differences (already-correct iTunes values).
+            let off = current > expected ? current - expected : expected - current
+            if off > 50_000 || mhit.u32(at: 0xB8) != 0 || mhit.u32(at: 0xC8) != 0 {
+                mhit.setU64(at: 0xBC, expected)
+                mhit.setU32(at: 0xB8, 0)   // pregap
+                mhit.setU32(at: 0xC8, 0)   // postgap
+                mhit.setU32(at: 0xF8, 0)   // gapless_data
+                mhit.setU16(at: 0x100, 0)  // gapless_track_flag
+                mhit.setU16(at: 0x102, 0)  // gapless_album_flag
+                fixed += 1
+            }
+        }
+        return fixed
+    }
+
     /// Edit a track's string fields and/or star rating in place. Nil arguments
     /// are left unchanged. Caller should rebuildIndexes() afterwards.
     public func editTrack(id: UInt32, title: String? = nil, artist: String? = nil,
