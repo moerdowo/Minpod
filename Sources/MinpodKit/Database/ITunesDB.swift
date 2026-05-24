@@ -268,9 +268,11 @@ public final class ITunesDB {
             guard lenMS > 0, rate > 0 else { continue }
             let expected = UInt64((Double(lenMS) / 1000.0) * Double(rate))
             let current = mhit.u64(at: 0xBC)
-            // Tolerate small differences (already-correct iTunes values).
+            // Only fix counts that are clearly wrong (the cloned-template bug).
+            // iTunes-written tracks are within a few thousand samples and have
+            // valid pregap/postgap, so they're left untouched.
             let off = current > expected ? current - expected : expected - current
-            if off > 50_000 || mhit.u32(at: 0xB8) != 0 || mhit.u32(at: 0xC8) != 0 {
+            if off > 50_000 {
                 mhit.setU64(at: 0xBC, expected)
                 mhit.setU32(at: 0xB8, 0)   // pregap
                 mhit.setU32(at: 0xC8, 0)   // postgap
