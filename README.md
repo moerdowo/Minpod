@@ -132,3 +132,7 @@ The iTunesDB / ArtworkDB format details and the hash58 algorithm are based on
 the work of the [libgpod](https://gitlab.gnome.org/GNOME/libgpod) project.
 iPod and iTunes are trademarks of Apple. Minpod is not affiliated with or
 endorsed by Apple.
+
+## License
+
+Released under the [MIT License](LICENSE).
